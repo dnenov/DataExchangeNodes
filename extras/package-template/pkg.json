@@ -15,7 +15,7 @@
   "repository_url": "",
   "contains_binaries": true,
   "node_libraries": [
-    "DataExchangeNodes"
+    "ExchangeNodes"
   ]
 }
 

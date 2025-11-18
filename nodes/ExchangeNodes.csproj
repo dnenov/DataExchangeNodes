@@ -1,0 +1,52 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <PlatformTarget>x64</PlatformTarget>
+    <Prefer32Bit>false</Prefer32Bit>
+  </PropertyGroup>
+
+  <!-- Package Details -->
+  <PropertyGroup>
+    <RootNamespace>DataExchangeNodes</RootNamespace>
+    <AssemblyName>ExchangeNodes</AssemblyName>
+    <Authors>Autodesk</Authors>
+    <Description>Dynamo nodes for DataExchange integration</Description>
+    <PackageId>DataExchangeNodes</PackageId>
+    <Company>Autodesk</Company>
+    <Version>0.1.0</Version>
+    <Copyright>Copyright © 2025</Copyright>
+  </PropertyGroup>
+
+  <!-- Dynamo version for build dependencies -->
+  <PropertyGroup>
+    <DynamoVersion>4.1.0-beta3200</DynamoVersion>
+    <DynamoInstallVersion>4.1</DynamoInstallVersion>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="DynamoVisualProgramming.Core" Version="$(DynamoVersion)" ExcludeAssets="runtime" />
+    <PackageReference Include="DynamoVisualProgramming.DynamoServices" Version="$(DynamoVersion)" ExcludeAssets="runtime" />
+    <PackageReference Include="DynamoVisualProgramming.ZeroTouchLibrary" Version="$(DynamoVersion)" ExcludeAssets="runtime" />
+  </ItemGroup>
+
+  <!-- Output path to match ForgeParameterNodes pattern -->
+  <PropertyGroup>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <OutputPath>..\bin\$(Configuration)\$(DynamoVersion)\DataExchangeNodes</OutputPath>
+  </PropertyGroup>
+
+  <!-- Copy pkg.json to output -->
+  <ItemGroup>
+    <None Include="manifests\pkg.json">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <!-- Post-build step to create distributable package -->
+  <Target Name="PostBuild" AfterTargets="AfterBuild">
+    <Exec Command="call $(SolutionDir)PostBuildStep.bat $(SolutionDir) $(Platform) $(Configuration) $(DynamoVersion) $(DynamoInstallVersion)" />
+  </Target>
+</Project>
+

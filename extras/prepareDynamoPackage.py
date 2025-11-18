@@ -23,8 +23,8 @@ def main():
   if (os.path.exists(targetFolder)):
     shutil.rmtree(targetFolder)
 
-  # The actual build output is in bin\Config\net10.0-windows\
-  sourceBinariesFolder = os.path.join(currentFolder, "..", "bin", config, "net10.0-windows")
+  # The actual build output is in bin\Config\DynamoVersion\DataExchangeNodes\win-x64
+  sourceBinariesFolder = os.path.join(currentFolder, "..", "bin", config, dynamoVersion, "DataExchangeNodes", "win-x64")
 
   if not (os.path.exists(sourceBinariesFolder) and 
           os.path.exists(templateFolder)):
