@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="DynamoVisualProgramming.ZeroTouchLibrary" Version="4.1.0-beta3200" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <OutputPath>bin\$(Configuration)\</OutputPath>
+  </PropertyGroup>
+</Project>
+

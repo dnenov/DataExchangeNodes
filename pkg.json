@@ -1,0 +1,21 @@
+{
+  "license": "MIT",
+  "file_hash": null,
+  "name": "DataExchangeNodes",
+  "version": "0.1.0",
+  "description": "Dynamo nodes for DataExchange integration",
+  "group": "",
+  "keywords": [],
+  "dependencies": [],
+  "contents": "",
+  "engine_version": "4.1",
+  "engine": "dynamo",
+  "engine_metadata": "",
+  "site_url": "",
+  "repository_url": "",
+  "contains_binaries": true,
+  "node_libraries": [
+    "DataExchangeNodes"
+  ]
+}
+
