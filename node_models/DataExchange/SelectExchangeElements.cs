@@ -7,15 +7,15 @@ using ProtoCore.AST.AssociativeAST;
 namespace DataExchangeNodes.NodeModels.DataExchange
 {
     /// <summary>
-    /// NodeModel for selecting elements from a DataExchange collection
+    /// NodeModel for selecting a DataExchange from ACC
     /// </summary>
-    [NodeName("Select DataExchange Elements")]
+    [NodeName("Select Exchange")]
     [NodeCategory("DataExchange.Selection")]
-    [NodeDescription("Browse and select elements from a DataExchange collection")]
-    [NodeSearchTags("dataexchange", "select", "exchange", "elements")]
-    [OutPortTypes("var[]")]
-    [OutPortNames("elements")]
-    [OutPortDescriptions("Selected DataExchange elements")]
+    [NodeDescription("Browse and select a DataExchange from Autodesk Construction Cloud")]
+    [NodeSearchTags("dataexchange", "select", "exchange", "acc", "browse")]
+    [OutPortTypes("DataExchangeNodes.DataExchange.Exchange")]
+    [OutPortNames("exchange")]
+    [OutPortDescriptions("Selected exchange with metadata (title, project, IDs, etc.)")]
     [IsDesignScriptCompatible]
     public class SelectExchangeElements : CoreNodeModels.Input.String
     {
@@ -88,7 +88,7 @@ namespace DataExchangeNodes.NodeModels.DataExchange
             // Build a deferred function call to our utility function
             // This creates a "promise" that will execute when the graph evaluates
             var func = AstFactory.BuildFunctionCall(
-                new Func<string, List<object>>(DataExchangeNodes.DataExchange.DataExchangeUtils.GetElementsFromExchange),
+                new Func<string, DataExchangeNodes.DataExchange.Exchange>(DataExchangeNodes.DataExchange.DataExchangeUtils.GetExchangeFromSelection),
                 new List<AssociativeNode> { inputString });
 
             return new[] { AstFactory.BuildAssignment(GetAstIdentifierForOutputIndex(0), func) };

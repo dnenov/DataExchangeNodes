@@ -36,6 +36,8 @@ namespace DataExchangeNodes.NodeViews.DataExchange
         private TextBlock contentText;
         private DynamoViewModel dynamoViewModel;
         private static IInteropBridge _bridge;
+        private static Client _client;
+        private static ReadExchangeModel _readModel;
         private DynamoAuthProvider authProvider;
 
         public DelegateCommand OpenDataExchangeCommand { get; set; }
@@ -47,7 +49,7 @@ namespace DataExchangeNodes.NodeViews.DataExchange
         {
             try
             {
-                // Check authentication
+                // Check authentication - the user might have logged out since the node was created
                 if (!authProvider.IsAuthenticated())
                 {
                     nodeModel.Warning("Please log in to Dynamo first");
@@ -83,27 +85,48 @@ namespace DataExchangeNodes.NodeViews.DataExchange
                     ConnectorVersion = "0.1.0"
                 };
 
-                // Create DataExchange client
-                var client = new Client(sdkOptions);
-                var readModel = ReadExchangeModel.GetInstance(client);
+                // Create or reuse DataExchange client
+                if (_client == null)
+                {
+                    dynamoViewModel?.Model?.Logger?.Log("SelectExchangeElements: Creating NEW DataExchange client...");
+                    _client = new Client(sdkOptions);
+                    _readModel = ReadExchangeModel.GetInstance(_client);
+                    dynamoViewModel?.Model?.Logger?.Log("SelectExchangeElements: Client and ReadModel created");
+                }
+                else
+                {
+                    dynamoViewModel?.Model?.Logger?.Log("SelectExchangeElements: Reusing existing client and ReadModel");
+                }
+                
+                // Always update the current node reference
                 ReadExchangeModel.CurrentNode = nodeModel;
+                ReadExchangeModel.Logger = dynamoViewModel?.Model?.Logger;
+                dynamoViewModel?.Model?.Logger?.Log($"SelectExchangeElements: CurrentNode updated: {nodeModel?.GUID}");
 
                 // Initialize bridge if not already done
                 if (_bridge == null)
                 {
-                    var bridgeOptions = InteropBridgeOptions.FromClient(client);
-                    bridgeOptions.Exchange = readModel;
+                    dynamoViewModel?.Model?.Logger?.Log("SelectExchangeElements: Initializing InteropBridge...");
+                    var bridgeOptions = InteropBridgeOptions.FromClient(_client);
+                    bridgeOptions.Exchange = _readModel;
                     bridgeOptions.HostWindowHandle = Process.GetCurrentProcess().MainWindowHandle;
                     bridgeOptions.Invoker = new MainThreadInvoker(
                         System.Windows.Threading.Dispatcher.CurrentDispatcher);
 
                     _bridge = InteropBridgeFactory.Create(bridgeOptions);
                     await _bridge.InitializeAsync();
+                    dynamoViewModel?.Model?.Logger?.Log("SelectExchangeElements: InteropBridge initialized successfully");
+                }
+                else
+                {
+                    dynamoViewModel?.Model?.Logger?.Log("SelectExchangeElements: Reusing existing InteropBridge (callback should still work)");
                 }
 
                 // Launch the DataExchange UI
+                dynamoViewModel?.Model?.Logger?.Log("SelectExchangeElements: Launching DataExchange UI...");
                 await _bridge.LaunchConnectorUiAsync();
                 _bridge.SetWindowState(Autodesk.DataExchange.UI.Core.Enums.WindowState.Show);
+                dynamoViewModel?.Model?.Logger?.Log("SelectExchangeElements: DataExchange UI launched and shown");
 
                 contentText.Text = "UI opened";
             }
