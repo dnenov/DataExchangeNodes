@@ -1,0 +1,717 @@
+<?xml version="1.0"?>
+<doc>
+    <assembly>
+        "DesignTranslator.TTMESH"
+    </assembly>
+    <members>
+        <member name="M:DesignTranslator.TTMESHProducerOptions.ValidateOptionsApplied(ATF.BaseOptions*,nlohmann.basic_json&lt;std.map,std.vector,std.basic_string&lt;System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte,std.char_traits{System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte},std.allocator&lt;System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte&gt;&gt;,System.Boolean,System.Int64,System.UInt64,System.Double,std.allocator,nlohmann.adl_serializer&gt;!System.Runtime.CompilerServices.IsConst*!System.Runtime.CompilerServices.IsImplicitlyDereferenced)">
+            <summary>
+Validate options setting. Throws exception if options querried are different from input.
+</summary>
+            <param name="atfOptions">ATF options.</param>
+            <param name="inOptions">JSON options.</param>
+            <returns>True if options querried are same as input.</returns>
+        </member>
+        <member name="M:DesignTranslator.TTMESHProducerOptions.CreateProducer(DesignTranslator.Context!System.Runtime.CompilerServices.IsConst*!System.Runtime.CompilerServices.IsImplicitlyDereferenced)">
+            <summary>
+Create/return the ATF producer based on the options.
+NOTE: The caller is responsible for deleting the producer when finished.
+</summary>
+            <param name="context">Context for translator.</param>
+            <returns>ATF producer based on the options.</returns>
+        </member>
+        <member name="M:DesignTranslator.TTMESHProducerOptions.Sources">
+            <summary>
+Get the list of sources for the producer. This can be either source files or a urn.
+</summary>
+            <returns>List of sources.</returns>
+        </member>
+        <member name="M:DesignTranslator.TTMESHProducerOptions.#ctor(nlohmann.basic_json&lt;std.map,std.vector,std.basic_string&lt;System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte,std.char_traits{System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte},std.allocator&lt;System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte&gt;&gt;,System.Boolean,System.Int64,System.UInt64,System.Double,std.allocator,nlohmann.adl_serializer&gt;!System.Runtime.CompilerServices.IsConst*!System.Runtime.CompilerServices.IsImplicitlyDereferenced,DesignTranslator.Context!System.Runtime.CompilerServices.IsConst*)">
+            <summary>
+Options constructor parses the input JSON object.
+</summary>
+            <param name="producerOptions">JSON producer options.</param>
+            <param name="inContext">Context for translator.</param>
+        </member>
+        <member name="T:DesignTranslator.TTMESHProducerOptions">
+            <summary>
+TritonMesh producer options class.
+</summary>
+        </member>
+        <member name="M:DesignTranslator.Utilities.MakeTargetFilePath(std.basic_string&lt;System.Char,std.char_traits{System.Char},std.allocator&lt;System.Char&gt;&gt;,std.basic_string&lt;System.Char,std.char_traits{System.Char},std.allocator&lt;System.Char&gt;&gt;,std.basic_string&lt;System.Char,std.char_traits{System.Char},std.allocator&lt;System.Char&gt;&gt;)">
+            <summary>
+Create the full target file path using the source file, target suffix, and final output folder.
+</summary>
+            <param name="sourceFile">Source file path.</param>
+            <param name="targetSuffix">Target file suffix.</param>
+            <param name="outputDir">Outpute folder.</param>
+            <returns>Target file.</returns>
+        </member>
+        <member name="M:DesignTranslator.Utilities.CreateConsumerOptions(DesignTranslator.FormatType,nlohmann.basic_json&lt;std.map,std.vector,std.basic_string&lt;System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte,std.char_traits{System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte},std.allocator&lt;System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte&gt;&gt;,System.Boolean,System.Int64,System.UInt64,System.Double,std.allocator,nlohmann.adl_serializer&gt;!System.Runtime.CompilerServices.IsConst*!System.Runtime.CompilerServices.IsImplicitlyDereferenced,DesignTranslator.Context!System.Runtime.CompilerServices.IsConst*)">
+            <summary>
+Try to parse an integer value from the input JSON object. Return true if successful or false if the property was not found.
+</summary>
+            <param name="jsonObj">JSON object to parse from.</param>
+            <param name="propName">Property name.</param>
+            <param name="value">Value of property.</param>
+            <returns>True if successfully parsed.</returns>
+        </member>
+        <member name="M:DesignTranslator.Utilities.CreateProducerOptions(DesignTranslator.FormatType,nlohmann.basic_json&lt;std.map,std.vector,std.basic_string&lt;System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte,std.char_traits{System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte},std.allocator&lt;System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte&gt;&gt;,System.Boolean,System.Int64,System.UInt64,System.Double,std.allocator,nlohmann.adl_serializer&gt;!System.Runtime.CompilerServices.IsConst*!System.Runtime.CompilerServices.IsImplicitlyDereferenced,DesignTranslator.Context!System.Runtime.CompilerServices.IsConst*)">
+            <summary>
+Try to parse an integer value from the input JSON object. Return true if successful or false if the property was not found.
+</summary>
+            <param name="jsonObj">JSON object to parse from.</param>
+            <param name="propName">Property name.</param>
+            <param name="value">Value of property.</param>
+            <returns>True if successfully parsed.</returns>
+        </member>
+        <member name="M:DesignTranslator.Utilities.LoadOptionsLibrary(DesignTranslator.FormatType)">
+            <summary>
+Try to load the options/processing library for a given format type.
+</summary>
+            <param name="formatType">Format type.</param>
+            <returns>HMODULE Library address.</returns>
+        </member>
+        <member name="M:DesignTranslator.Utilities.TryParse(nlohmann.basic_json&lt;std.map,std.vector,std.basic_string&lt;System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte,std.char_traits{System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte},std.allocator&lt;System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte&gt;&gt;,System.Boolean,System.Int64,System.UInt64,System.Double,std.allocator,nlohmann.adl_serializer&gt;!System.Runtime.CompilerServices.IsConst*!System.Runtime.CompilerServices.IsImplicitlyDereferenced,System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte!System.Runtime.CompilerServices.IsConst*,std.vector&lt;DesignTranslator.Source,std.allocator&lt;DesignTranslator.Source&gt;&gt;*!System.Runtime.CompilerServices.IsImplicitlyDereferenced)">
+            <summary>
+Try to parse an array of source objects from the input JSON object. Return true if successful or false if the property was not found.
+</summary>
+            <param name="jsonObj">JSON object to parse from.</param>
+            <param name="propName">Property name.</param>
+            <param name="value">Value of property.</param>
+            <returns>True if successfully parsed.</returns>
+        </member>
+        <member name="M:DesignTranslator.Utilities.TryParse(nlohmann.basic_json&lt;std.map,std.vector,std.basic_string&lt;System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte,std.char_traits{System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte},std.allocator&lt;System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte&gt;&gt;,System.Boolean,System.Int64,System.UInt64,System.Double,std.allocator,nlohmann.adl_serializer&gt;!System.Runtime.CompilerServices.IsConst*!System.Runtime.CompilerServices.IsImplicitlyDereferenced,System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte!System.Runtime.CompilerServices.IsConst*,std.vector&lt;std.basic_string&lt;System.Char,std.char_traits{System.Char},std.allocator&lt;System.Char&gt;&gt;,std.allocator&lt;std.basic_string&lt;System.Char,std.char">
+            <summary>
+Try to parse a wstring array from the input JSON object. Return true if successful or false if the property was not found.
+</summary>
+            <param name="jsonObj">JSON object to parse from.</param>
+            <param name="propName">Property name.</param>
+            <param name="value">Value of property.</param>
+            <returns>True if successfully parsed.</returns>
+        </member>
+        <member name="M:DesignTranslator.Utilities.TryParse(nlohmann.basic_json&lt;std.map,std.vector,std.basic_string&lt;System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte,std.char_traits{System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte},std.allocator&lt;System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte&gt;&gt;,System.Boolean,System.Int64,System.UInt64,System.Double,std.allocator,nlohmann.adl_serializer&gt;!System.Runtime.CompilerServices.IsConst*!System.Runtime.CompilerServices.IsImplicitlyDereferenced,System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte!System.Runtime.CompilerServices.IsConst*,std.vector&lt;System.Double,std.allocator&lt;System.Double&gt;&gt;*!System.Runtime.CompilerServices.IsImplicitlyDereferenced)">
+            <summary>
+Try to parse an double array from the input JSON object. Return true if successful or false if the property was not found.
+</summary>
+            <param name="jsonObj">JSON object to parse from.</param>
+            <param name="propName">Property name.</param>
+            <param name="value">Value of property.</param>
+            <returns>True if successfully parsed.</returns>
+        </member>
+        <member name="M:DesignTranslator.Utilities.TryParse(nlohmann.basic_json&lt;std.map,std.vector,std.basic_string&lt;System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte,std.char_traits{System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte},std.allocator&lt;System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte&gt;&gt;,System.Boolean,System.Int64,System.UInt64,System.Double,std.allocator,nlohmann.adl_serializer&gt;!System.Runtime.CompilerServices.IsConst*!System.Runtime.CompilerServices.IsImplicitlyDereferenced,System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte!System.Runtime.CompilerServices.IsConst*,nlohmann.basic_json&lt;std.map,std.vector,std.basic_string&lt;System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte,std.char_traits{System.SB">
+            <summary>
+Try to parse a json object from the input JSON object. Return true if successful or false if the property was not found.
+</summary>
+            <param name="jsonObj">JSON object to parse from.</param>
+            <param name="propName">Property name.</param>
+            <param name="value">Value of property.</param>
+            <returns>True if successfully parsed.</returns>
+        </member>
+        <member name="M:DesignTranslator.Utilities.TryParse(nlohmann.basic_json&lt;std.map,std.vector,std.basic_string&lt;System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte,std.char_traits{System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte},std.allocator&lt;System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte&gt;&gt;,System.Boolean,System.Int64,System.UInt64,System.Double,std.allocator,nlohmann.adl_serializer&gt;!System.Runtime.CompilerServices.IsConst*!System.Runtime.CompilerServices.IsImplicitlyDereferenced,System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte!System.Runtime.CompilerServices.IsConst*,std.basic_string&lt;System.Char,std.char_traits{System.Char},std.allocator&lt;System.Char&gt;&gt;*!System.Runtime.CompilerServices.IsImplicitlyDereferenced)">
+            <summary>
+Try to parse a wstring value from the input JSON object. Return true if successful or false if the property was not found.
+</summary>
+            <param name="jsonObj">JSON object to parse from.</param>
+            <param name="propName">Property name.</param>
+            <param name="value">Value of property.</param>
+            <returns>True if successfully parsed.</returns>
+        </member>
+        <member name="M:DesignTranslator.Utilities.TryParse(nlohmann.basic_json&lt;std.map,std.vector,std.basic_string&lt;System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte,std.char_traits{System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte},std.allocator&lt;System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte&gt;&gt;,System.Boolean,System.Int64,System.UInt64,System.Double,std.allocator,nlohmann.adl_serializer&gt;!System.Runtime.CompilerServices.IsConst*!System.Runtime.CompilerServices.IsImplicitlyDereferenced,System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte!System.Runtime.CompilerServices.IsConst*,std.basic_string&lt;System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte,std.char_traits{System.SByte!System.Runtime.CompilerServices.IsS">
+            <summary>
+Try to parse a string value from the input JSON object. Return true if successful or false if the property was not found.
+</summary>
+            <param name="jsonObj">JSON object to parse from.</param>
+            <param name="propName">Property name.</param>
+            <param name="value">Value of property.</param>
+            <returns>True if successfully parsed.</returns>
+        </member>
+        <member name="M:DesignTranslator.Utilities.TryParse(nlohmann.basic_json&lt;std.map,std.vector,std.basic_string&lt;System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte,std.char_traits{System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte},std.allocator&lt;System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte&gt;&gt;,System.Boolean,System.Int64,System.UInt64,System.Double,std.allocator,nlohmann.adl_serializer&gt;!System.Runtime.CompilerServices.IsConst*!System.Runtime.CompilerServices.IsImplicitlyDereferenced,System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte!System.Runtime.CompilerServices.IsConst*,System.Double*!System.Runtime.CompilerServices.IsImplicitlyDereferenced)">
+            <summary>
+Try to parse a double value from the input JSON object. Return true if successful or false if the property was not found.
+</summary>
+            <param name="jsonObj">JSON object to parse from.</param>
+            <param name="propName">Property name.</param>
+            <param name="value">Value of property.</param>
+            <returns>True if successfully parsed.</returns>
+        </member>
+        <member name="M:DesignTranslator.Utilities.TryParse(nlohmann.basic_json&lt;std.map,std.vector,std.basic_string&lt;System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte,std.char_traits{System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte},std.allocator&lt;System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte&gt;&gt;,System.Boolean,System.Int64,System.UInt64,System.Double,std.allocator,nlohmann.adl_serializer&gt;!System.Runtime.CompilerServices.IsConst*!System.Runtime.CompilerServices.IsImplicitlyDereferenced,System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte!System.Runtime.CompilerServices.IsConst*,System.Int32*!System.Runtime.CompilerServices.IsImplicitlyDereferenced)">
+            <summary>
+Try to parse an integer value from the input JSON object. Return true if successful or false if the property was not found.
+</summary>
+            <param name="jsonObj">JSON object to parse from.</param>
+            <param name="propName">Property name.</param>
+            <param name="value">Value of property.</param>
+            <returns>True if successfully parsed.</returns>
+        </member>
+        <member name="M:DesignTranslator.Utilities.TryParse(nlohmann.basic_json&lt;std.map,std.vector,std.basic_string&lt;System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte,std.char_traits{System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte},std.allocator&lt;System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte&gt;&gt;,System.Boolean,System.Int64,System.UInt64,System.Double,std.allocator,nlohmann.adl_serializer&gt;!System.Runtime.CompilerServices.IsConst*!System.Runtime.CompilerServices.IsImplicitlyDereferenced,System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte!System.Runtime.CompilerServices.IsConst*,System.Boolean*!System.Runtime.CompilerServices.IsImplicitlyDereferenced)">
+            <summary>
+Try to parse a boolean value from the input JSON object. Return true if successful or false if the property was not found.
+</summary>
+            <param name="jsonObj">JSON object to parse from.</param>
+            <param name="propName">Property name.</param>
+            <param name="value">Value of property.</param>
+            <returns>True if successfully parsed.</returns>
+        </member>
+        <member name="M:DesignTranslator.Utilities.GetFormatType(std.basic_string&lt;System.Char,std.char_traits{System.Char},std.allocator&lt;System.Char&gt;&gt;!System.Runtime.CompilerServices.IsConst*!System.Runtime.CompilerServices.IsImplicitlyDereferenced)">
+            <summary>
+Gets format type from a string.
+</summary>
+            <param name="typeString">Format type string.</param>
+            <returns>Format type.</returns>
+        </member>
+        <member name="M:DesignTranslator.Utilities.GetFormatTypeString(DesignTranslator.FormatType)">
+            <summary>
+Gets format type string from an enum.
+</summary>
+            <param name="formatType">Format type.</param>
+            <returns>Format type string.</returns>
+        </member>
+        <member name="M:DesignTranslator.Utilities.Utf8Decode(std.basic_string&lt;System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte,std.char_traits{System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte},std.allocator&lt;System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte&gt;&gt;!System.Runtime.CompilerServices.IsConst*!System.Runtime.CompilerServices.IsImplicitlyDereferenced)">
+            <summary>
+Convert multibyte character string to wide string.
+</summary>
+            <param name="str">String to decode.</param>
+            <returns>UTF8 decoded string.</returns>
+        </member>
+        <member name="M:DesignTranslator.Utilities.Utf8Encode(std.basic_string&lt;System.Char,std.char_traits{System.Char},std.allocator&lt;System.Char&gt;&gt;!System.Runtime.CompilerServices.IsConst*!System.Runtime.CompilerServices.IsImplicitlyDereferenced)">
+            <summary>
+Convert wide character string to multibyte string.
+</summary>
+            <param name="wstr">String to encode.</param>
+            <returns>UTF8 encoded string.</returns>
+        </member>
+        <member name="T:DesignTranslator.Utilities">
+            <summary>
+Static utilities class.
+</summary>
+        </member>
+        <member name="M:DesignTranslator.LibraryException.#ctor(DesignTranslator.TranslationException!System.Runtime.CompilerServices.IsConst*!System.Runtime.CompilerServices.IsImplicitlyDereferenced)">
+            <summary>
+Exception copy constructor.
+</summary>
+            <param name="ex">Inner exception.</param>
+        </member>
+        <member name="M:DesignTranslator.LibraryException.#ctor(std.basic_string&lt;System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte,std.char_traits{System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte},std.allocator&lt;System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte&gt;&gt;)">
+            <summary>
+Exception constructor takes in a descriptive message.
+</summary>
+            <param name="message">Exception message.</param>
+        </member>
+        <member name="M:DesignTranslator.LibraryException.#ctor(System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte!System.Runtime.CompilerServices.IsConst*)">
+            <summary>
+Exception constructor takes in a descriptive message.
+</summary>
+            <param name="message">Exception message.</param>
+        </member>
+        <member name="T:DesignTranslator.LibraryException">
+            <summary>
+General Design Translator exception.
+</summary>
+        </member>
+        <member name="M:DesignTranslator.TranslationException.#ctor(DesignTranslator.TranslationException!System.Runtime.CompilerServices.IsConst*!System.Runtime.CompilerServices.IsImplicitlyDereferenced)">
+            <summary>
+Exception copy constructor.
+</summary>
+            <param name="ex">Inner exception.</param>
+        </member>
+        <member name="M:DesignTranslator.TranslationException.#ctor(std.basic_string&lt;System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte,std.char_traits{System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte},std.allocator&lt;System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte&gt;&gt;)">
+            <summary>
+Exception constructor takes in a descriptive message.
+</summary>
+            <param name="message">Exception message.</param>
+        </member>
+        <member name="M:DesignTranslator.TranslationException.#ctor(System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte!System.Runtime.CompilerServices.IsConst*)">
+            <summary>
+Exception constructor takes in a descriptive message.
+</summary>
+            <param name="message">Exception message.</param>
+        </member>
+        <member name="T:DesignTranslator.TranslationException">
+            <summary>
+General Design Translator exception.
+</summary>
+        </member>
+        <member name="M:DesignTranslator.TypeException.#ctor(DesignTranslator.RequiredPropertyException!System.Runtime.CompilerServices.IsConst*!System.Runtime.CompilerServices.IsImplicitlyDereferenced)">
+            <summary>
+Exception copy constructor.
+</summary>
+            <param name="ex">Inner exception.</param>
+        </member>
+        <member name="M:DesignTranslator.TypeException.#ctor(std.basic_string&lt;System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte,std.char_traits{System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte},std.allocator&lt;System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte&gt;&gt;)">
+            <summary>
+Exception constructor takes the name of the missing property.
+</summary>
+            <param name="propName">Property name.</param>
+        </member>
+        <member name="M:DesignTranslator.TypeException.#ctor(System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte!System.Runtime.CompilerServices.IsConst*)">
+            <summary>
+Exception constructor takes the name of the property.
+</summary>
+            <param name="propName">Property name.</param>
+        </member>
+        <member name="T:DesignTranslator.TypeException">
+            <summary>
+Wrong property type exception.
+</summary>
+        </member>
+        <member name="M:DesignTranslator.RequiredPropertyException.#ctor(DesignTranslator.RequiredPropertyException!System.Runtime.CompilerServices.IsConst*!System.Runtime.CompilerServices.IsImplicitlyDereferenced)">
+            <summary>
+Exception copy constructor.
+</summary>
+            <param name="ex">Inner exception.</param>
+        </member>
+        <member name="M:DesignTranslator.RequiredPropertyException.#ctor(std.basic_string&lt;System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte,std.char_traits{System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte},std.allocator&lt;System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte&gt;&gt;)">
+            <summary>
+Exception constructor takes the name of the missing property.
+</summary>
+            <param name="propName">Property name.</param>
+        </member>
+        <member name="M:DesignTranslator.RequiredPropertyException.#ctor(System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte!System.Runtime.CompilerServices.IsConst*)">
+            <summary>
+Exception constructor takes the name of the missing property.
+</summary>
+            <param name="propName">Property name.</param>
+        </member>
+        <member name="T:DesignTranslator.RequiredPropertyException">
+            <summary>
+Required property missing exception.
+</summary>
+        </member>
+        <member name="M:DesignTranslator.Exception.#ctor(DesignTranslator.Exception!System.Runtime.CompilerServices.IsConst*!System.Runtime.CompilerServices.IsImplicitlyDereferenced)">
+            <summary>
+Exception copy constructor.
+</summary>
+            <param name="message">Inner exception.</param>
+        </member>
+        <member name="M:DesignTranslator.Exception.#ctor(std.basic_string&lt;System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte,std.char_traits{System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte},std.allocator&lt;System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte&gt;&gt;)">
+            <summary>
+Exception constructor takes in a descriptive message.
+</summary>
+            <param name="message">Exception message.</param>
+        </member>
+        <member name="M:DesignTranslator.Exception.#ctor(System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte!System.Runtime.CompilerServices.IsConst*)">
+            <summary>
+Exception constructor takes in a descriptive message.
+</summary>
+            <param name="message">Exception message.</param>
+        </member>
+        <member name="T:DesignTranslator.Exception">
+            <summary>
+General Design Translator exception.
+</summary>
+        </member>
+        <member name="M:DesignTranslator.Context.getTestingCoverageCase(DesignTranslator.Context.TestCoverageCase)">
+            <summary>
+Get testing coverage case value.
+</summary>
+            <param name="consumerOptionsObj">JSON options.</param>
+        </member>
+        <member name="M:DesignTranslator.Context.setTestCoverageCase(DesignTranslator.Context.TestCoverageCase,System.Boolean)">
+            <summary>
+Set value for testing coverage case.
+</summary>
+            <param name="key">Test coverage case.</param>
+            <param name="value">True if testing for this coverage case.</param>
+        </member>
+        <member name="M:DesignTranslator.Context.getConsumerOptionsJson">
+            <summary>
+Get stored consumer option json string
+</summary>
+        </member>
+        <member name="M:DesignTranslator.Context.setConsumerOptions(nlohmann.basic_json&lt;std.map,std.vector,std.basic_string&lt;System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte,std.char_traits{System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte},std.allocator&lt;System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte&gt;&gt;,System.Boolean,System.Int64,System.UInt64,System.Double,std.allocator,nlohmann.adl_serializer&gt;*!System.Runtime.CompilerServices.IsImplicitlyDereferenced)">
+            <summary>
+Set consumer option based on json. Make it public so we can reset for IFC
+</summary>
+            <param name="consumerOptionsObj">JSON options.</param>
+        </member>
+        <member name="M:DesignTranslator.Context.ValidateContextOptionsApplied(nlohmann.basic_json&lt;std.map,std.vector,std.basic_string&lt;System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte,std.char_traits{System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte},std.allocator&lt;System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte&gt;&gt;,System.Boolean,System.Int64,System.UInt64,System.Double,std.allocator,nlohmann.adl_serializer&gt;!System.Runtime.CompilerServices.IsConst*!System.Runtime.CompilerServices.IsImplicitlyDereferenced)">
+            <summary>
+Validate context options setting. Throws exception if options querried are different from input.
+</summary>
+            <param name="inOptions">JSON options.</param>
+            <returns>True if options querried are same as input.</returns>
+        </member>
+        <member name="M:DesignTranslator.Context.ValidateOptionsApplied(ATF.ProcessorOptions*,nlohmann.basic_json&lt;std.map,std.vector,std.basic_string&lt;System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte,std.char_traits{System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte},std.allocator&lt;System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte&gt;&gt;,System.Boolean,System.Int64,System.UInt64,System.Double,std.allocator,nlohmann.adl_serializer&gt;!System.Runtime.CompilerServices.IsConst*!System.Runtime.CompilerServices.IsImplicitlyDereferenced)">
+            <summary>
+Validate options setting. Throws exception if options querried are different from input.
+</summary>
+            <param name="processorOpts">ATF processor options.</param>
+            <param name="inOptions">JSON options.</param>
+            <returns>True if options querried are same as input.</returns>
+        </member>
+        <member name="M:DesignTranslator.Context.TranslationRetryCount">
+            <summary>
+How many times to retry file translation if it times out.
+</summary>
+            <returns>Retry count.</returns>
+        </member>
+        <member name="M:DesignTranslator.Context.TranslationTimeoutPeriod">
+            <summary>
+How long in seconds to allow a file translation to run before timing out.
+</summary>
+            <returns>Timeout period in seconds.</returns>
+        </member>
+        <member name="M:DesignTranslator.Context.DisableMultiThread">
+            <summary>
+Get disable multi-thread translation.
+</summary>
+            <returns>Output folder name.</returns>
+        </member>
+        <member name="M:DesignTranslator.Context.ParameterUtility">
+            <summary>
+Get the ATF::IParameterUtility pointer.
+</summary>
+            <returns>IParameterUtility pointer.</returns>
+        </member>
+        <member name="M:DesignTranslator.Context.ParameterUtility(ATF.IParameterUtility*)">
+            <summary>
+Set ATF::IParameterUtility to handle the parameter related tasks.
+</summary>
+            <param name="paramUtil">IParameterUtility pointer.</param>
+        </member>
+        <member name="M:DesignTranslator.Context.OutputFolder">
+            <summary>
+Get the output folder.
+</summary>
+            <returns>Output folder name.</returns>
+        </member>
+        <member name="M:DesignTranslator.Context.OutputFolder(std.basic_string&lt;System.Char,std.char_traits{System.Char},std.allocator&lt;System.Char&gt;&gt;!System.Runtime.CompilerServices.IsConst*!System.Runtime.CompilerServices.IsImplicitlyDereferenced)">
+            <summary>
+Set the output folder.
+</summary>
+            <param name="inOutName">Output folder name.</param>
+        </member>
+        <member name="M:DesignTranslator.Context.SetOutputFileName(std.basic_string&lt;System.Char,std.char_traits{System.Char},std.allocator&lt;System.Char&gt;&gt;)">
+            <summary>
+Set the output file name. output folders are set in consumers.
+</summary>
+            <param name="inOutName">Output file name.</param>
+        </member>
+        <member name="M:DesignTranslator.Context.OutputFileName">
+            <summary>
+Get the output file name. Use source (w/o) extension if output file is not set.
+</summary>
+            <returns>Output file name.</returns>
+        </member>
+        <member name="M:DesignTranslator.Context.FileInfoSetting">
+            <summary>
+Get the file info that is generated when file is translated.
+</summary>
+            <returns>File info setting value.</returns>
+        </member>
+        <member name="M:DesignTranslator.Context.FileInfoSetting(std.basic_string&lt;System.Char,std.char_traits{System.Char},std.allocator&lt;System.Char&gt;&gt;!System.Runtime.CompilerServices.IsConst*!System.Runtime.CompilerServices.IsImplicitlyDereferenced)">
+            <summary>
+Set the file info that is generated when file is translated.
+</summary>
+            <param name="fileInfoSetting">File info setting value.</param>
+        </member>
+        <member name="M:DesignTranslator.Context.CurrentSource">
+            <summary>
+Get the current source for one particular translation (soure file name or source urn).
+</summary>
+            <returns>Source file path or URN.</returns>
+        </member>
+        <member name="M:DesignTranslator.Context.CurrentSource(std.basic_string&lt;System.Char,std.char_traits{System.Char},std.allocator&lt;System.Char&gt;&gt;!System.Runtime.CompilerServices.IsConst*!System.Runtime.CompilerServices.IsImplicitlyDereferenced)">
+            <summary>
+Set the current source for one particular translation (soure file name or source urn).
+</summary>
+            <param name="source">Source file path or URN.</param>
+        </member>
+        <member name="M:DesignTranslator.Context.Log(DesignTranslator.Logger.Level,std.basic_string&lt;System.Char,std.char_traits{System.Char},std.allocator&lt;System.Char&gt;&gt;!System.Runtime.CompilerServices.IsConst*!System.Runtime.CompilerServices.IsImplicitlyDereferenced)">
+            <summary>
+Log a message to the log file.
+</summary>
+            <param name="logLevel">Log level. (INFO, WARNING, or ERROR)</param>
+            <param name="msg">Message to log.</param>
+        </member>
+        <member name="M:DesignTranslator.Context.LogFile">
+            <summary>
+Get the full path to the log file where translation results will/may be logged.
+</summary>
+            <returns>Path of log file.</returns>
+        </member>
+        <member name="M:DesignTranslator.Context.ConsumerOptions">
+            <summary>
+Return the consumer options packet.
+</summary>
+            <returns>ATF consumer options.</returns>
+        </member>
+        <member name="M:DesignTranslator.Context.ProducerOptions">
+            <summary>
+Return the producer options packet.
+</summary>
+            <returns>ATF producer options.</returns>
+        </member>
+        <member name="M:DesignTranslator.Context.ProcessorOptions">
+            <summary />
+            <summary>
+Return the ATF processor options packet.
+</summary>
+            <returns>ATF processor options.</returns>
+        </member>
+        <member name="M:DesignTranslator.Context.#ctor(nlohmann.basic_json&lt;std.map,std.vector,std.basic_string&lt;System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte,std.char_traits{System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte},std.allocator&lt;System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte&gt;&gt;,System.Boolean,System.Int64,System.UInt64,System.Double,std.allocator,nlohmann.adl_serializer&gt;!System.Runtime.CompilerServices.IsConst*!System.Runtime.CompilerServices.IsImplicitlyDereferenced,DesignTranslator.Logger*!System.Runtime.CompilerServices.IsImplicitlyDereferenced)">
+            <summary>
+Context constructor parses and collects the inputs/options for translation.
+</summary>
+            <param name="inputObj">JSON for context properties.</param>
+            <param name="logger">Logger for translation messages.</param>
+        </member>
+        <member name="T:DesignTranslator.Context.TestCoverageCase">
+            <summary>
+Enum class for checking if testing for coverage cases.
+</summary>
+        </member>
+        <member name="T:DesignTranslator.Context">
+            <summary>
+The context class is the collection of inputs/options that forms the setting for the translation.
+</summary>
+        </member>
+        <member name="M:DesignTranslator.Logger.Log(DesignTranslator.Logger.Level,std.basic_string&lt;System.Char,std.char_traits{System.Char},std.allocator&lt;System.Char&gt;&gt;!System.Runtime.CompilerServices.IsConst*!System.Runtime.CompilerServices.IsImplicitlyDereferenced)">
+            <summary>
+Log a warning/info message to the logger.
+</summary>
+            <param name="logLevel">Log level. (INFO, WARNING or ERROR)</param>
+            <param name="msg">Log message.</param>
+        </member>
+        <member name="M:DesignTranslator.Logger.LogFile">
+            <summary>
+Get the name of the log file.
+</summary>
+            <returns>Log file name.</returns>
+        </member>
+        <member name="M:DesignTranslator.Logger.Initialize(std.basic_string&lt;System.Char,std.char_traits{System.Char},std.allocator&lt;System.Char&gt;&gt;!System.Runtime.CompilerServices.IsConst*!System.Runtime.CompilerServices.IsImplicitlyDereferenced)">
+            <summary>
+Initialize the logger given the name of the file to log to (can be "console").
+</summary>
+            <param name="logFile">File name.</param>
+        </member>
+        <member name="M:DesignTranslator.Logger.Dispose">
+            <summary>
+Logger destructor.
+</summary>
+        </member>
+        <member name="M:DesignTranslator.Logger.#ctor">
+            <summary>
+Default logger constructor.
+</summary>
+        </member>
+        <member name="T:DesignTranslator.Logger.Level">
+            <summary>
+Enum represents the severity of a log message.
+</summary>
+        </member>
+        <member name="T:DesignTranslator.Logger">
+            <summary>
+Class used for logging all translation messages.
+</summary>
+        </member>
+        <member name="M:DesignTranslator.TTMESHConsumerOptions.CreateConsumer(DesignTranslator.Context!System.Runtime.CompilerServices.IsConst*!System.Runtime.CompilerServices.IsImplicitlyDereferenced)">
+            <summary>
+Create ATF consumer based on the options.
+NOTE: The caller is responsible for deleting the consumer when finished.
+</summary>
+            <param name="context">Context for translator.</param>
+            <returns>ATF consumer based on the options.</returns>
+        </member>
+        <member name="M:DesignTranslator.TTMESHConsumerOptions.OutputFolder">
+            <summary>
+Get the output folder for translation.
+</summary>
+            <returns>Output folder path.</returns>
+        </member>
+        <member name="M:DesignTranslator.TTMESHConsumerOptions.#ctor(nlohmann.basic_json&lt;std.map,std.vector,std.basic_string&lt;System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte,std.char_traits{System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte},std.allocator&lt;System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte&gt;&gt;,System.Boolean,System.Int64,System.UInt64,System.Double,std.allocator,nlohmann.adl_serializer&gt;!System.Runtime.CompilerServices.IsConst*!System.Runtime.CompilerServices.IsImplicitlyDereferenced,DesignTranslator.Context!System.Runtime.CompilerServices.IsConst*)">
+            <summary>
+Options constructor parses the input JSON object.
+</summary>
+            <param name="consumerOptions">JSON consumer options.</param>
+            <param name="inContext">Context for translator.</param>
+        </member>
+        <member name="T:DesignTranslator.TTMESHConsumerOptions">
+            <summary>
+TTMESH consumer options class.
+</summary>
+        </member>
+        <member name="M:DesignTranslator.ProducerOptions.CreateProducer(DesignTranslator.Context!System.Runtime.CompilerServices.IsConst*!System.Runtime.CompilerServices.IsImplicitlyDereferenced)">
+            <summary>
+Create/return the ATF producer based on the options.
+NOTE: The caller is responsible for deleting the producer when finished.
+</summary>
+            <param name="context">Translator context object.</param>
+            <returns>ATF producer.</returns>
+        </member>
+        <member name="M:DesignTranslator.ProducerOptions.Sources">
+            <summary>
+Return a list of sources for the producer.
+</summary>
+            <returns>List of sources.</returns>
+        </member>
+        <member name="T:DesignTranslator.ProducerOptions">
+            <summary>
+Base class for all producer options provides virtual function for creating and returning the ATF producer itself.
+</summary>
+        </member>
+        <member name="M:DesignTranslator.ConsumerOptions.CreateConsumer(DesignTranslator.Context!System.Runtime.CompilerServices.IsConst*!System.Runtime.CompilerServices.IsImplicitlyDereferenced)">
+            <summary>
+Create/return the ATF consumer based on the options.
+NOTE: The caller is responsible for deleting the consumer when finished.
+</summary>
+            <param name="context">Translator context object.</param>
+            <returns>ATF consumer.</returns>
+        </member>
+        <member name="M:DesignTranslator.ConsumerOptions.AllowMultiBodyConsumption">
+            <summary>
+Whether to allow consuming multiple bodies.
+</summary>
+            <returns>Allow multi-body consumption flag.</returns>
+        </member>
+        <member name="M:DesignTranslator.ConsumerOptions.ViewData">
+            <summary>
+Optional view data consist of an up vector, front vector, and north vector.
+[up_x, up_y, up_z, front_x, front_y, front_z, north_x, north_y, north_z]
+</summary>
+            <returns>List representing view data.</returns>
+        </member>
+        <member name="T:DesignTranslator.ConsumerOptions">
+            <summary>
+Base class for all consumer options provides virtual function for creating and returning the ATF consumer itself.
+</summary>
+        </member>
+        <member name="M:DesignTranslator.Options.ValidateOptionsApplied(ATF.BaseOptions*,nlohmann.basic_json&lt;std.map,std.vector,std.basic_string&lt;System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte,std.char_traits{System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte},std.allocator&lt;System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte&gt;&gt;,System.Boolean,System.Int64,System.UInt64,System.Double,std.allocator,nlohmann.adl_serializer&gt;!System.Runtime.CompilerServices.IsConst*!System.Runtime.CompilerServices.IsImplicitlyDereferenced)">
+            <summary>
+Validate options setting. Throws exception if options querried are different from input.
+</summary>
+            <param name="atfOptions">ATF options.</param>
+            <param name="inOptions">JSON options.</param>
+            <returns>True if options querried are same as input.</returns>
+        </member>
+        <member name="M:DesignTranslator.Options.TypeString">
+            <summary>
+Get the format type for this options packet in string form.
+</summary>
+            <returns>Format type of options.</returns>
+        </member>
+        <member name="M:DesignTranslator.Options.Type">
+            <summary>
+Get the format type for this options packet.
+</summary>
+            <returns>Format type of options.</returns>
+        </member>
+        <member name="M:DesignTranslator.Options.ATFOptions">
+            <summary>
+Virtual options destructor.
+</summary>
+            <summary>
+Get the ATF options packet.
+</summary>
+            <returns>ATF base options.</returns>
+        </member>
+        <member name="M:DesignTranslator.Options.#ctor">
+            <summary>
+Default options constructor.
+</summary>
+        </member>
+        <member name="T:DesignTranslator.Options">
+            <summary>
+Base class for all options packet classes. This class services mostly to compartmentalize
+the code that parses the JSON. Most of the options parsed will be stored in an underlying
+ATF options object which can then be referenced for translation.
+</summary>
+        </member>
+        <member name="M:DesignTranslator.Source.PolygonIndexStylesMap">
+            <summary>
+Return the polygon index styles map string (may be empty).
+</summary>
+            <param name="polygonIndexStylesMap">The polygon index styles map string.</param>
+        </member>
+        <member name="M:DesignTranslator.Source.PolygonIndexStylesMap(std.basic_string&lt;System.Char,std.char_traits{System.Char},std.allocator&lt;System.Char&gt;&gt;!System.Runtime.CompilerServices.IsConst*!System.Runtime.CompilerServices.IsImplicitlyDereferenced)">
+            <summary>
+Set the polygon index styles map string.
+</summary>
+            <param name="polygonIndexStylesMap">The polygon index styles map string.</param>
+        </member>
+        <member name="M:DesignTranslator.Source.SubEntStylesMap">
+            <summary>
+Return the sub entity styles map string (may be empty).
+</summary>
+            <returns>The sub entity styles map string.</returns>
+        </member>
+        <member name="M:DesignTranslator.Source.SubEntStylesMap(std.basic_string&lt;System.Char,std.char_traits{System.Char},std.allocator&lt;System.Char&gt;&gt;!System.Runtime.CompilerServices.IsConst*!System.Runtime.CompilerServices.IsImplicitlyDereferenced)">
+            <summary>
+Set the sub entity styles map string.
+</summary>
+            <param name="subEntStylesMap">The sub entity styles map string.</param>
+        </member>
+        <member name="M:DesignTranslator.Source.Style">
+            <summary>
+Return the style string (may be empty).
+</summary>
+            <returns>The style string.</returns>
+        </member>
+        <member name="M:DesignTranslator.Source.Style(std.basic_string&lt;System.Char,std.char_traits{System.Char},std.allocator&lt;System.Char&gt;&gt;!System.Runtime.CompilerServices.IsConst*!System.Runtime.CompilerServices.IsImplicitlyDereferenced)">
+            <summary>
+Set the style string.
+</summary>
+            <param name="style">The style string.</param>
+        </member>
+        <member name="M:DesignTranslator.Source.Units">
+            <summary>
+Return the units value.
+</summary>
+            <returns>The units value.</returns>
+        </member>
+        <member name="M:DesignTranslator.Source.Units(&lt;unknown type&gt;)">
+            <summary>
+Set the units value.
+</summary>
+            <param name="units">The units value.</param>
+        </member>
+        <member name="M:DesignTranslator.Source.Name">
+            <summary>
+Return the source name.
+</summary>
+            <returns>The source name.</returns>
+        </member>
+        <member name="M:DesignTranslator.Source.Name(std.basic_string&lt;System.Char,std.char_traits{System.Char},std.allocator&lt;System.Char&gt;&gt;!System.Runtime.CompilerServices.IsConst*!System.Runtime.CompilerServices.IsImplicitlyDereferenced)">
+            <summary>
+Set the source name (full path or url).
+</summary>
+            <param name="name">The source name.</param>
+        </member>
+        <member name="M:DesignTranslator.Source.op_Assign(DesignTranslator.Source!System.Runtime.CompilerServices.IsConst*!System.Runtime.CompilerServices.IsImplicitlyDereferenced)">
+            <summary>
+Assign data from another source object to this source object.
+</summary>
+            <param name="other">Source object to copy from.</param>
+            <returns>This source object.</returns>
+        </member>
+        <member name="M:DesignTranslator.Source.#ctor(DesignTranslator.Source!System.Runtime.CompilerServices.IsConst*!System.Runtime.CompilerServices.IsImplicitlyDereferenced)">
+            <summary>
+Source copy constructor.
+</summary>
+            <param name="other">Source object to copy from.</param>
+        </member>
+        <member name="M:DesignTranslator.Source.#ctor(nlohmann.basic_json&lt;std.map,std.vector,std.basic_string&lt;System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte,std.char_traits{System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte},std.allocator&lt;System.SByte!System.Runtime.CompilerServices.IsSignUnspecifiedByte&gt;&gt;,System.Boolean,System.Int64,System.UInt64,System.Double,std.allocator,nlohmann.adl_serializer&gt;!System.Runtime.CompilerServices.IsConst*!System.Runtime.CompilerServices.IsImplicitlyDereferenced)">
+            <summary>
+Construct a new source from an incoming JSON object.
+</summary>
+            <param name="jsonObj">The JSON object to parse.</param>
+        </member>
+        <member name="M:DesignTranslator.Source.#ctor(std.basic_string&lt;System.Char,std.char_traits{System.Char},std.allocator&lt;System.Char&gt;&gt;!System.Runtime.CompilerServices.IsConst*!System.Runtime.CompilerServices.IsImplicitlyDereferenced)">
+            <summary>
+Construct a new source using the given name.
+</summary>
+            <param name="name">The source name (full path or url).</param>
+        </member>
+        <member name="T:DesignTranslator.Source">
+            <summary>
+Source data (name, units, style info) varies depending on the producer type.
+</summary>
+        </member>
+        <member name="T:DesignTranslator.FormatType">
+            <summary>
+Currently supported Producer/Consumer types for translations.
+</summary>
+        </member>
+    </members>
+</doc>

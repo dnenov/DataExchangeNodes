@@ -23,8 +23,8 @@ def main():
   if (os.path.exists(targetFolder)):
     shutil.rmtree(targetFolder)
 
-  # The actual build output is in bin\Config\DynamoVersion\DataExchangeNodes\win-x64
-  sourceBinariesFolder = os.path.join(currentFolder, "..", "bin", config, dynamoVersion, "DataExchangeNodes", "win-x64")
+  # The actual build output is in bin\Config\DynamoVersion\DataExchangeNodes
+  sourceBinariesFolder = os.path.join(currentFolder, "..", "bin", config, dynamoVersion, "DataExchangeNodes")
 
   if not (os.path.exists(sourceBinariesFolder) and 
           os.path.exists(templateFolder)):
@@ -61,11 +61,16 @@ def main():
 
   print(f"Package version set to: {packageVersion}")
 
-  # Copy all binaries from source to target bin folder
+  # Copy all binaries and subdirectories from source to target bin folder
   for item in os.listdir(sourceBinariesFolder):
     source_item = os.path.join(sourceBinariesFolder, item)
+    target_item = os.path.join(targetFolderBin, item)
     if os.path.isfile(source_item):
       shutil.copy2(source_item, targetFolderBin)
+    elif os.path.isdir(source_item):
+      if os.path.exists(target_item):
+        shutil.rmtree(target_item)
+      shutil.copytree(source_item, target_item)
 
   # Deploy to Dynamo package folders (use install version like 4.1, not full version like 4.1.0-beta3200)
   packageTargetFolder = os.path.join(os.getenv("APPDATA"), "Dynamo", "Dynamo Core", dynamoInstallVersion, "packages", "DataExchangeNodes")

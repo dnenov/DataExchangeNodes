@@ -6,6 +6,8 @@
     <Prefer32Bit>false</Prefer32Bit>
     <UseWPF>true</UseWPF>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <!-- Force all NuGet package dependencies (including transitive) to be copied to output -->
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
   </PropertyGroup>
 
   <!-- Package Details -->
@@ -30,8 +32,8 @@
     <PackageReference Include="DynamoVisualProgramming.WpfUILibrary" Version="$(DynamoVersion)" ExcludeAssets="runtime" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" ExcludeAssets="runtime" />
     
-    <!-- DataExchange UI SDK 6.2.12-beta (isolated module) - confirmed working with .NET 10 -->
-    <PackageReference Include="Autodesk.DataExchange.UI" Version="6.2.12-beta" />
+    <!-- DataExchange UI SDK 6.2.12-beta - Include ALL assets -->
+    <PackageReference Include="Autodesk.DataExchange.UI" Version="6.2.12-beta" PrivateAssets="none" />
   </ItemGroup>
   
   <ItemGroup>
@@ -56,8 +58,39 @@
   <!-- Output path to match ForgeParameterNodes pattern -->
   <PropertyGroup>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <AppendRuntimeIdentifierToOutputPath>false</AppendRuntimeIdentifierToOutputPath>
     <OutputPath>..\bin\$(Configuration)\$(DynamoVersion)\DataExchangeNodes</OutputPath>
   </PropertyGroup>
+
+  <!-- Include entire FDXToCollab folder with all native DLLs (DynamoATF approach) -->
+  <ItemGroup>
+    <None Include="..\native\FDXToCollab\**\*.*">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+      <Link>FDXToCollab\%(RecursiveDir)%(Filename)%(Extension)</Link>
+    </None>
+  </ItemGroup>
+
+  <!-- Also copy specific DLLs to bin root (required by .NET assembly loader) -->
+  <ItemGroup>
+    <None Include="..\native\FDXToCollab\Autodesk.GeometryPrimitives.IO.dll">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Include="..\native\FDXToCollab\Autodesk.GeometryPrimitives.Data.dll">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Include="..\native\FDXToCollab\Autodesk.GeometryUtilities.dll">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Include="..\native\FDXToCollab\Autodesk.GeometryUtilities.MeshAPI.dll">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Include="..\native\FDXToCollab\Autodesk.GeometryUtilities.MeshAPI.IO.dll">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Include="..\native\FDXToCollab\Autodesk.DataExchange.OpenAPITools.dll">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
 
   <!-- Post-build step to create distributable package -->
   <Target Name="PostBuild" AfterTargets="AfterBuild">
