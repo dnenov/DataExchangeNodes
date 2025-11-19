@@ -4,15 +4,15 @@
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <PlatformTarget>x64</PlatformTarget>
     <Prefer32Bit>false</Prefer32Bit>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
   </PropertyGroup>
 
   <!-- Package Details -->
   <PropertyGroup>
-    <RootNamespace>DataExchangeNodes</RootNamespace>
-    <AssemblyName>ExchangeNodes</AssemblyName>
+    <RootNamespace>DataExchangeNodes.NodeModels</RootNamespace>
+    <AssemblyName>ExchangeNodes.NodeModels</AssemblyName>
     <Authors>Autodesk</Authors>
-    <Description>Dynamo nodes for DataExchange integration</Description>
-    <PackageId>DataExchangeNodes</PackageId>
+    <Description>NodeModels for DataExchange Dynamo nodes</Description>
     <Company>Autodesk</Company>
     <Version>0.1.0</Version>
     <Copyright>Copyright © 2025</Copyright>
@@ -22,14 +22,18 @@
   <PropertyGroup>
     <DynamoVersion>4.1.0-beta3200</DynamoVersion>
     <DynamoInstallVersion>4.1</DynamoInstallVersion>
-    <GenerateDocumentationFile>true</GenerateDocumentationFile>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="DynamoVisualProgramming.Core" Version="$(DynamoVersion)" ExcludeAssets="runtime" />
     <PackageReference Include="DynamoVisualProgramming.DynamoServices" Version="$(DynamoVersion)" ExcludeAssets="runtime" />
-    <PackageReference Include="DynamoVisualProgramming.ZeroTouchLibrary" Version="$(DynamoVersion)" ExcludeAssets="runtime" />
+    <PackageReference Include="DynamoVisualProgramming.WpfUILibrary" Version="$(DynamoVersion)" ExcludeAssets="runtime" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" ExcludeAssets="runtime" />
+  </ItemGroup>
+
+  <!-- Reference to the base nodes project -->
+  <ItemGroup>
+    <ProjectReference Include="..\nodes\ExchangeNodes.csproj" />
   </ItemGroup>
 
   <!-- Output path to match ForgeParameterNodes pattern -->
@@ -37,12 +41,5 @@
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <OutputPath>..\bin\$(Configuration)\$(DynamoVersion)\DataExchangeNodes</OutputPath>
   </PropertyGroup>
-
-  <!-- Copy pkg.json to output -->
-  <ItemGroup>
-    <None Include="manifests\pkg.json">
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </None>
-  </ItemGroup>
 </Project>
 
