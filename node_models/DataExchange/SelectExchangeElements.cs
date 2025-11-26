@@ -10,7 +10,7 @@ namespace DataExchangeNodes.NodeModels.DataExchange
     /// NodeModel for selecting a DataExchange from ACC
     /// </summary>
     [NodeName("Select Exchange")]
-    [NodeCategory("DataExchange.Selection")]
+    [NodeCategory("ExchangeNodes.DataExchangeNodes.Selection")]
     [NodeDescription("Browse and select a DataExchange from Autodesk Construction Cloud")]
     [NodeSearchTags("dataexchange", "select", "exchange", "acc", "browse")]
     [OutPortTypes("DataExchangeNodes.DataExchange.Exchange")]
