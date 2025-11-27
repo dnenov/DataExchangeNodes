@@ -98,6 +98,10 @@ namespace DataExchangeNodes.NodeViews.DataExchange
                     dynamoViewModel?.Model?.Logger?.Log("SelectExchangeElements: Reusing existing client and ReadModel");
                 }
                 
+                // Register auth provider for LoadGeometryFromExchange node
+                DataExchangeNodes.DataExchange.LoadGeometryFromExchange.RegisterAuthProvider(() => authProvider.GetToken());
+                dynamoViewModel?.Model?.Logger?.Log("SelectExchangeElements: Auth provider registered for LoadGeometryFromExchange");
+                
                 // Always update the current node reference
                 ReadExchangeModel.CurrentNode = nodeModel;
                 ReadExchangeModel.Logger = dynamoViewModel?.Model?.Logger;
@@ -154,6 +158,10 @@ namespace DataExchangeNodes.NodeViews.DataExchange
             // Get DynamoViewModel for authentication
             dynamoViewModel = nodeView.ViewModel.DynamoViewModel;
             authProvider = new DynamoAuthProvider(dynamoViewModel);
+
+            // Register auth provider for LoadGeometryFromExchange node (for saved graphs)
+            DataExchangeNodes.DataExchange.LoadGeometryFromExchange.RegisterAuthProvider(() => authProvider.GetToken());
+            dynamoViewModel?.Model?.Logger?.Log("SelectExchangeElements: Auth provider registered on view initialization");
 
             // Create the Select button
             buttonControl = new Button()

@@ -32,6 +32,35 @@
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" ExcludeAssets="runtime" />
   </ItemGroup>
 
+  <!-- Translation.Proxy for native FDX geometry operations (from DynamoATF deployed package) -->
+  <ItemGroup>
+    <Reference Include="Translation.Proxy">
+      <HintPath>C:\Users\nenovd\AppData\Roaming\Dynamo\Dynamo Core\3.6\packages\DynamoATF\bin\Translation.Proxy.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+  </ItemGroup>
+
+  <!-- Copy Translation.Proxy.dll and ALL native dependencies from DynamoATF -->
+  <ItemGroup>
+    <!-- Core native library (THE CRITICAL ONE!) -->
+    <None Include="C:\Users\nenovd\AppData\Roaming\Dynamo\Dynamo Core\3.6\packages\DynamoATF\bin\libxlate.dll">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <!-- Managed wrappers and support libraries -->
+    <None Include="C:\Users\nenovd\AppData\Roaming\Dynamo\Dynamo Core\3.6\packages\DynamoATF\bin\Translation.Proxy.dll">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Include="C:\Users\nenovd\AppData\Roaming\Dynamo\Dynamo Core\3.6\packages\DynamoATF\bin\Translation.dll">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Include="C:\Users\nenovd\AppData\Roaming\Dynamo\Dynamo Core\3.6\packages\DynamoATF\bin\Translation.Models.dll">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Include="C:\Users\nenovd\AppData\Roaming\Dynamo\Dynamo Core\3.6\packages\DynamoATF\bin\Translation.Models.customization.dll">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
   <!-- Output path to match ForgeParameterNodes pattern -->
   <PropertyGroup>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
