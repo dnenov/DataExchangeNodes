@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using Autodesk.DataExchange;
+using Autodesk.DataExchange.Core.Events;
 using Autodesk.DataExchange.Core.Interface;
 using Autodesk.DataExchange.Extensions.HostingProvider;
 using Autodesk.DataExchange.Extensions.Logging.File;
@@ -39,8 +40,43 @@ namespace DataExchangeNodes.NodeViews.DataExchange
         private static Client _client;
         private static ReadExchangeModel _readModel;
         private DynamoAuthProvider authProvider;
+        private bool autoTriggerEnabled = true; // Flag to control auto-trigger
 
         public DelegateCommand OpenDataExchangeCommand { get; set; }
+
+        /// <summary>
+        /// Event handler for auto-triggering element selection after exchange is loaded
+        /// </summary>
+        private async void OnExchangeLoadedAutoTrigger(object sender, AfterGetLatestExchangeDetailsEventArgs e)
+        {
+            if (!autoTriggerEnabled) return;
+
+            try
+            {
+                dynamoViewModel?.Model?.Logger?.Log($"SelectExchangeElements: Exchange loaded - {e.ExchangeItem?.Name}");
+                dynamoViewModel?.Model?.Logger?.Log("SelectExchangeElements: Auto-triggering SelectElements...");
+
+                // Auto-trigger the "Select elements" action
+                var exchangeIds = new List<string> { e.ExchangeItem.ExchangeID };
+                await _readModel.SelectElementsAsync(exchangeIds);
+                
+                dynamoViewModel?.Model?.Logger?.Log($"SelectExchangeElements: Auto-triggered SelectElements for {e.ExchangeItem.ExchangeID}");
+                
+                // Update UI text
+                if (contentText != null)
+                {
+                    contentText.Dispatcher.Invoke(() =>
+                    {
+                        contentText.Text = $"Selected: {e.ExchangeItem?.Name}";
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                dynamoViewModel?.Model?.Logger?.Log($"SelectExchangeElements: Error in auto-trigger: {ex.Message}");
+                dynamoViewModel?.Model?.Logger?.Log($"SelectExchangeElements: Stack trace: {ex.StackTrace}");
+            }
+        }
 
         /// <summary>
         /// Opens the DataExchange SDK UI for element selection
@@ -91,7 +127,11 @@ namespace DataExchangeNodes.NodeViews.DataExchange
                     dynamoViewModel?.Model?.Logger?.Log("SelectExchangeElements: Creating NEW DataExchange client...");
                     _client = new Client(sdkOptions);
                     _readModel = ReadExchangeModel.GetInstance(_client);
-                    dynamoViewModel?.Model?.Logger?.Log("SelectExchangeElements: Client and ReadModel created");
+                    
+                    // Subscribe to exchange loaded event for auto-triggering selection
+                    _readModel.AfterGetLatestExchangeDetails += OnExchangeLoadedAutoTrigger;
+                    
+                    dynamoViewModel?.Model?.Logger?.Log("SelectExchangeElements: Client and ReadModel created with auto-trigger");
                 }
                 else
                 {
