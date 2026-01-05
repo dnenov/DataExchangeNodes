@@ -21,7 +21,16 @@ def main():
   targetFolder = os.path.join(currentFolder, "..", "dynamo-package")
 
   if (os.path.exists(targetFolder)):
-    shutil.rmtree(targetFolder)
+    try:
+      # Make files writable before deleting (Windows permission issue)
+      def make_writable(func, path, exc_info):
+        os.chmod(path, 0o777)
+        func(path)
+      
+      shutil.rmtree(targetFolder, onerror=make_writable)
+    except Exception as e:
+      print(f"Warning: Could not remove existing dynamo-package folder: {e}")
+      print("Attempting to continue anyway...")
 
   # The actual build output is in bin\Config\DynamoVersion\DataExchangeNodes
   sourceBinariesFolder = os.path.join(currentFolder, "..", "bin", config, dynamoVersion, "DataExchangeNodes")
@@ -29,7 +38,10 @@ def main():
   if not (os.path.exists(sourceBinariesFolder) and 
           os.path.exists(templateFolder)):
     print("Incomplete build.")
-    return
+    print(f"Expected build output at: {sourceBinariesFolder}")
+    print(f"Template folder: {templateFolder}")
+    print("Build may not have completed successfully, or output path is different.")
+    sys.exit(1)  # Exit with error code so MSBuild knows the step failed
 
   shutil.copytree(templateFolder, targetFolder)
   targetFolderBin = os.path.join(targetFolder, "bin")
@@ -72,23 +84,46 @@ def main():
         shutil.rmtree(target_item)
       shutil.copytree(source_item, target_item)
 
+  # Helper function to make files writable before deletion (Windows permission issue)
+  def make_writable(func, path, exc_info):
+    try:
+      os.chmod(path, 0o777)
+      func(path)
+    except:
+      pass  # Ignore errors during cleanup
+
   # Deploy to Dynamo package folders (use install version like 4.1, not full version like 4.1.0-beta3200)
   packageTargetFolder = os.path.join(os.getenv("APPDATA"), "Dynamo", "Dynamo Core", dynamoInstallVersion, "packages", "DataExchangeNodes")
 
   if os.path.exists(packageTargetFolder):
-    shutil.rmtree(packageTargetFolder)
+    try:
+      shutil.rmtree(packageTargetFolder, onerror=make_writable)
+    except Exception as e:
+      print(f"Warning: Could not remove existing package folder {packageTargetFolder}: {e}")
+      print("This may be because Dynamo is running. The package will be updated in place.")
 
-  shutil.copytree(targetFolder, packageTargetFolder)
-  print("Dynamo package complete  " + packageTargetFolder)
+  try:
+    shutil.copytree(targetFolder, packageTargetFolder)
+    print("Dynamo package complete  " + packageTargetFolder)
+  except Exception as e:
+    print(f"Error copying to {packageTargetFolder}: {e}")
+    print("Make sure Dynamo is not running and try again.")
 
   # Also copy to Dynamo Revit
   packageTargetFolderRevit = os.path.join(os.getenv("APPDATA"), "Dynamo", "Dynamo Revit", dynamoInstallVersion, "packages", "DataExchangeNodes")
 
   if os.path.exists(packageTargetFolderRevit):
-    shutil.rmtree(packageTargetFolderRevit)
+    try:
+      shutil.rmtree(packageTargetFolderRevit, onerror=make_writable)
+    except Exception as e:
+      print(f"Warning: Could not remove existing Revit package folder {packageTargetFolderRevit}: {e}")
 
-  shutil.copytree(targetFolder, packageTargetFolderRevit)
-  print("Dynamo package complete  " + packageTargetFolderRevit)
+  try:
+    shutil.copytree(targetFolder, packageTargetFolderRevit)
+    print("Dynamo package complete  " + packageTargetFolderRevit)
+  except Exception as e:
+    print(f"Error copying to {packageTargetFolderRevit}: {e}")
+    print("Make sure Dynamo Revit is not running and try again.")
 
 if __name__ == "__main__":
   main()

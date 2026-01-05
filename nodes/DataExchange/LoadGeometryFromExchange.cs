@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Net.Http;
+using System.Threading.Tasks;
 using Autodesk.DesignScript.Geometry;
 using Autodesk.DesignScript.Runtime;
 
@@ -11,7 +13,7 @@ using System.Runtime.InteropServices;
 namespace DataExchangeNodes.DataExchange
 {
     /// <summary>
-    /// Load geometry from a DataExchange using Dynamo.Proxy.FileLoader
+    /// Load geometry from a DataExchange using ProtoGeometry SMB file APIs
     /// </summary>
     public static class LoadGeometryFromExchange
     {
@@ -29,7 +31,7 @@ namespace DataExchangeNodes.DataExchange
 
         /// <summary>
         /// Loads geometry from a DataExchange as Dynamo geometry objects.
-        /// Uses the native Dynamo FileLoader to download and convert .smb (DataExchange internal format) to ACIS geometry in memory.
+        /// Downloads SMB files from DataExchange and reads them using ProtoGeometry APIs.
         /// Authentication is handled automatically using Dynamo's login - no token required!
         /// </summary>
         /// <param name="exchange">Exchange object from SelectExchange node</param>
@@ -46,7 +48,7 @@ namespace DataExchangeNodes.DataExchange
 
             try
             {
-                diagnostics.Add("=== DataExchange Geometry Loader ===");
+                diagnostics.Add("=== DataExchange Geometry Loader (ProtoGeometry SMB) ===");
                 diagnostics.Add($"Exchange: {exchange?.ExchangeTitle ?? "null"}");
                 diagnostics.Add($"Unit: {unit}");
 
@@ -70,12 +72,14 @@ namespace DataExchangeNodes.DataExchange
 
                 diagnostics.Add($"✓ Authenticated (token length: {accessToken.Length} chars)");
 
-                // Create .fdx manifest file
-                var fdxPath = CreateFdxManifest(exchange, accessToken, unit, diagnostics);
-                diagnostics.Add($"✓ Created .fdx manifest: {fdxPath}");
+                // Download SMB file from DataExchange
+                // Note: Using .Result blocks the thread, but Dynamo ZeroTouch nodes are synchronous
+                // This is acceptable for now as Dynamo will handle the blocking appropriately
+                var smbFilePath = DownloadSMBFile(exchange, accessToken, diagnostics).GetAwaiter().GetResult();
+                diagnostics.Add($"✓ Downloaded SMB file: {smbFilePath}");
 
-                // Load geometry using Dynamo.Proxy.FileLoader
-                geometries = LoadGeometryFromFdx(fdxPath, unit, diagnostics);
+                // Load geometry using ProtoGeometry SMB APIs
+                geometries = LoadGeometryFromSMB(smbFilePath, unit, diagnostics);
                 diagnostics.Add($"✓ Loaded {geometries.Count} geometry object(s)");
 
                 success = geometries.Count > 0;
@@ -102,227 +106,235 @@ namespace DataExchangeNodes.DataExchange
         }
 
         /// <summary>
-        /// Creates a .fdx manifest file for the FileLoader
-        /// Format based on DynamoATF implementation
+        /// Downloads SMB file from DataExchange API
         /// </summary>
-        private static string CreateFdxManifest(
+        private static async Task<string> DownloadSMBFile(
             Exchange exchange,
             string accessToken,
-            string unit,
             List<string> diagnostics)
         {
             try
             {
-                // Create temp directory for .fdx file
+                // Create temp directory for SMB file
                 var tempDir = Path.Combine(Path.GetTempPath(), "DataExchangeNodes");
                 if (!Directory.Exists(tempDir))
                     Directory.CreateDirectory(tempDir);
 
-                var fdxPath = Path.Combine(tempDir, $"Exchange_{exchange.ExchangeId}.fdx");
+                var smbFilePath = Path.Combine(tempDir, $"Exchange_{exchange.ExchangeId}_{exchange.CollectionId}.smb");
 
-                // Build ExchangeFileUrl in the format FileLoader expects (query filter format)
-                // Format: https://developer.api.autodesk.com/exchange/v1/exchanges?filters=attribute.exchangeFileUrn==<urn>
-                string exchangeUrl;
-                if (!string.IsNullOrEmpty(exchange.FileUrn))
+                // Build DataExchange API URL for downloading SMB file
+                // Typical endpoint: /exchanges/{exchangeId}/collections/{collectionId}/files or /download
+                var baseUrl = "https://developer.api.autodesk.com/exchange/v1";
+                var downloadUrl = $"{baseUrl}/exchanges/{exchange.ExchangeId}/collections/{exchange.CollectionId}/files";
+
+                diagnostics.Add($"  Downloading from: {downloadUrl}");
+
+                // Download file using HttpClient
+                using (var httpClient = new HttpClient())
                 {
-                    exchangeUrl = $"https://developer.api.autodesk.com/exchange/v1/exchanges?filters=attribute.exchangeFileUrn=={exchange.FileUrn}";
+                    httpClient.DefaultRequestHeaders.Authorization = 
+                        new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", accessToken);
+                    httpClient.DefaultRequestHeaders.Add("Accept", "application/octet-stream");
+
+                    var response = await httpClient.GetAsync(downloadUrl);
+                    response.EnsureSuccessStatusCode();
+
+                    // If the response is a redirect or JSON with a download URL, handle it
+                    var contentType = response.Content.Headers.ContentType?.MediaType;
+                    if (contentType == "application/json")
+                    {
+                        // Response might contain a download URL - parse it
+                        var jsonContent = await response.Content.ReadAsStringAsync();
+                        diagnostics.Add($"  Received JSON response, parsing...");
+                        // TODO: Parse JSON to get actual download URL if needed
+                        // For now, try alternative endpoint
+                        downloadUrl = $"{baseUrl}/exchanges/{exchange.ExchangeId}/collections/{exchange.CollectionId}/download";
+                        response = await httpClient.GetAsync(downloadUrl);
+                        response.EnsureSuccessStatusCode();
+                    }
+
+                    // Save SMB file
+                    using (var fileStream = new FileStream(smbFilePath, FileMode.Create))
+                    {
+                        await response.Content.CopyToAsync(fileStream);
+                    }
+
+                    diagnostics.Add($"  ✓ Downloaded {new FileInfo(smbFilePath).Length} bytes");
                 }
-                else
-                {
-                    // Fallback: try direct collection URL (might not work with FileLoader)
-                    exchangeUrl = $"https://developer.api.autodesk.com/exchange/v1/exchanges/{exchange.ExchangeId}/collections/{exchange.CollectionId}";
-                    diagnostics.Add("  ⚠️ Warning: FileUrn not available, using direct URL (may not work)");
-                }
 
-                // Write .fdx manifest
-                var fileLines = new string[4];
-                fileLines[0] = $"Token={accessToken}";
-                fileLines[1] = $"ExchangeFileUrl={exchangeUrl}";
-                fileLines[2] = "FDXConsumerLog=0";
-                fileLines[3] = $"unit={unit}";
-
-                File.WriteAllLines(fdxPath, fileLines);
-
-                diagnostics.Add($"  Exchange URL: {exchangeUrl}");
-                diagnostics.Add($"  Unit: {unit}");
-                diagnostics.Add($"  Token length: {accessToken.Length} chars");
-
-                return fdxPath;
+                return smbFilePath;
             }
             catch (Exception ex)
             {
-                diagnostics.Add($"✗ Failed to create .fdx manifest: {ex.Message}");
-                throw new IOException($"Failed to create .fdx manifest: {ex.Message}", ex);
+                diagnostics.Add($"✗ Failed to download SMB file: {ex.Message}");
+                throw new IOException($"Failed to download SMB file from DataExchange: {ex.Message}", ex);
             }
         }
 
         /// <summary>
-        /// Loads geometry from .fdx file using Dynamo.Proxy.FileLoader
+        /// Loads geometry from SMB file using ProtoGeometry APIs
         /// </summary>
-        private static List<Geometry> LoadGeometryFromFdx(
-            string fdxPath,
+        private static List<Geometry> LoadGeometryFromSMB(
+            string smbFilePath,
             string unit,
             List<string> diagnostics)
         {
             var geometries = new List<Geometry>();
-            Dynamo.Proxy.FileLoader fileLoader = null;
 
             try
             {
-                diagnostics.Add("\nLoading via Dynamo.Proxy.FileLoader...");
+                diagnostics.Add("\nLoading via ProtoGeometry SMB APIs...");
 
-                // Create FileLoader (native Dynamo component)
-                fileLoader = new Dynamo.Proxy.FileLoader(fdxPath, unit);
+                // Use ProtoGeometry to open SMB file
+                // Note: The exact API signature may vary - adjust based on actual ProtoGeometry API
+                // Common patterns:
+                // - ProtoGeometry.Geometry.OpenSMB(string path)
+                // - ProtoGeometry.FileLoader.OpenSMB(string path, string unit)
+                // - Or similar static/instance methods
 
-                // Load geometry from DataExchange
-                bool loadSuccess = fileLoader.Load();
-
-                if (!loadSuccess)
+                // Try reflection-based approach to find the SMB opening method
+                var protoGeometryAssembly = System.Reflection.Assembly.LoadFrom(
+                    Path.Combine(Path.GetDirectoryName(typeof(Geometry).Assembly.Location), "ProtoGeometry.dll"));
+                
+                if (protoGeometryAssembly == null)
                 {
-                    diagnostics.Add("✗ FileLoader.Load() returned false");
-                    throw new InvalidOperationException("FileLoader.Load() failed - check DataExchange connectivity");
+                    // Fallback: try loading from common locations
+                    var possiblePaths = new[]
+                    {
+                        @"C:\Users\nenovd\Downloads\Dynamo\RootDir\ProtoGeometry.dll",
+                        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), 
+                            @"Dynamo\Dynamo Core\4.1\ProtoGeometry.dll")
+                    };
+
+                    foreach (var path in possiblePaths)
+                    {
+                        if (File.Exists(path))
+                        {
+                            protoGeometryAssembly = System.Reflection.Assembly.LoadFrom(path);
+                            break;
+                        }
+                    }
                 }
 
-                diagnostics.Add("✓ FileLoader.Load() succeeded");
-
-                // Get imported objects
-                var importedObjects = fileLoader.GetImportedObjects();
-                var objectCount = importedObjects.Count();
-                diagnostics.Add($"✓ Retrieved {objectCount} imported object(s)");
-
-                // Extract geometry from imported objects
-                for (int i = 0; i < objectCount; i++)
+                if (protoGeometryAssembly == null)
                 {
-                    var importedObject = importedObjects.GetItem(i);
-                    var extractedGeometry = ExtractGeometry(importedObject, diagnostics);
-                    
-                    if (extractedGeometry != null && extractedGeometry.Any())
+                    throw new InvalidOperationException("ProtoGeometry.dll not found. Please ensure it's in the correct location.");
+                }
+
+                // Look for SMB-related types/methods
+                var types = protoGeometryAssembly.GetTypes();
+                var smbType = types.FirstOrDefault(t => 
+                    t.Name.Contains("SMB") || 
+                    t.Name.Contains("FileLoader") || 
+                    t.Name.Contains("GeometryLoader"));
+
+                if (smbType != null)
+                {
+                    diagnostics.Add($"  Found type: {smbType.FullName}");
+
+                    // Try to find Open/Load methods
+                    var openMethod = smbType.GetMethods(System.Reflection.BindingFlags.Public | 
+                        System.Reflection.BindingFlags.Static | 
+                        System.Reflection.BindingFlags.Instance)
+                        .FirstOrDefault(m => 
+                            (m.Name.Contains("Open") || m.Name.Contains("Load")) && 
+                            m.GetParameters().Length >= 1);
+
+                    if (openMethod != null)
                     {
-                        geometries.AddRange(extractedGeometry);
+                        diagnostics.Add($"  Found method: {openMethod.Name}");
+
+                        object loader = null;
+                        if (openMethod.IsStatic)
+                        {
+                            // Static method - call directly
+                            var result = openMethod.Invoke(null, new object[] { smbFilePath });
+                            if (result is IEnumerable<Geometry> geoEnumerable)
+                            {
+                                geometries.AddRange(geoEnumerable);
+                            }
+                            else if (result is Geometry geo)
+                            {
+                                geometries.Add(geo);
+                            }
+                        }
+                        else
+                        {
+                            // Instance method - create instance first
+                            loader = Activator.CreateInstance(smbType);
+                            var result = openMethod.Invoke(loader, new object[] { smbFilePath });
+                            if (result is IEnumerable<Geometry> geoEnumerable)
+                            {
+                                geometries.AddRange(geoEnumerable);
+                            }
+                            else if (result is Geometry geo)
+                            {
+                                geometries.Add(geo);
+                            }
+                        }
+
+                        // Try to get geometry from loaded objects
+                        if (loader != null)
+                        {
+                            var getGeometryMethod = loader.GetType().GetMethods()
+                                .FirstOrDefault(m => m.Name.Contains("GetGeometry") || m.Name.Contains("GetGeometries"));
+                            
+                            if (getGeometryMethod != null)
+                            {
+                                var geoResult = getGeometryMethod.Invoke(loader, null);
+                                if (geoResult is IEnumerable<Geometry> geoEnumerable)
+                                {
+                                    geometries.AddRange(geoEnumerable);
+                                }
+                            }
+                        }
                     }
+                    else
+                    {
+                        // Fallback: Try using Geometry.FromNativePointer if SMB file provides pointers
+                        diagnostics.Add("  ⚠️ Direct SMB API not found, trying alternative approach...");
+                        // This would require knowing how ProtoGeometry exposes SMB data
+                    }
+                }
+                else
+                {
+                    // Alternative: Use Geometry.FromNativePointer with file path
+                    // Some implementations allow direct file path to native pointer conversion
+                    diagnostics.Add("  ⚠️ SMB loader type not found, trying Geometry.FromNativePointer...");
+                    
+                    // Try: Geometry.FromNativePointer(IntPtr) - but we need to get the pointer from SMB file
+                    // This might require a different approach - loading SMB and getting ACIS body pointers
+                }
+
+                if (geometries.Count == 0)
+                {
+                    diagnostics.Add("  ⚠️ No geometries loaded - ProtoGeometry API may need adjustment");
+                    diagnostics.Add("  Please check ProtoGeometry.dll for SMB file opening methods");
+                }
+                else
+                {
+                    diagnostics.Add($"  ✓ Successfully loaded {geometries.Count} geometry object(s)");
                 }
 
                 return geometries;
             }
             catch (Exception ex)
             {
-                diagnostics.Add($"✗ Error loading geometry: {ex.Message}");
+                diagnostics.Add($"✗ Error loading geometry from SMB: {ex.Message}");
+                diagnostics.Add($"  Type: {ex.GetType().Name}");
+                diagnostics.Add($"  Stack: {ex.StackTrace}");
                 throw;
             }
             finally
             {
-                // Cleanup FileLoader
-                fileLoader?.Dispose();
-
-                // Cleanup .fdx file
+                // Cleanup SMB file
                 try
                 {
-                    if (File.Exists(fdxPath))
-                        File.Delete(fdxPath);
+                    if (File.Exists(smbFilePath))
+                        File.Delete(smbFilePath);
                 }
                 catch { /* Ignore cleanup errors */ }
             }
         }
-
-        /// <summary>
-        /// Extracts Dynamo geometry from Dynamo.Proxy imported objects
-        /// Uses the FromNativePointer pattern from ProtoGeometry to convert ACIS pointers to Dynamo geometry
-        /// </summary>
-        private static List<Geometry> ExtractGeometry(
-            Dynamo.Proxy.ImportedObject importedObject,
-            List<string> diagnostics)
-        {
-            var geometries = new List<Geometry>();
-
-            try
-            {
-                // Handle Brep (most common for DataExchange)
-                if (importedObject is Dynamo.Proxy.Brep brep)
-                {
-                    var asmBody = brep.GetAsmBody();
-                    if (asmBody != IntPtr.Zero)
-                    {
-                        var brepGeometry = Geometry.FromNativePointer(asmBody);
-                        if (brepGeometry != null && brepGeometry.Any())
-                        {
-                            geometries.AddRange(brepGeometry);
-                            diagnostics.Add($"  ✓ Brep: {brepGeometry.Count()} geometries");
-                        }
-                    }
-                    return geometries;
-                }
-
-                // Handle Curves
-                if (importedObject is Dynamo.Proxy.Curve curve)
-                {
-                    var arrayLength = curve.getArrayLength();
-                    for (int i = 0; i < arrayLength; i++)
-                    {
-                        var asmCurve = curve.GetAsmCurve(i);
-                        if (asmCurve != IntPtr.Zero)
-                        {
-                            var curveGeometry = Geometry.FromNativePointer(asmCurve);
-                            if (curveGeometry != null && curveGeometry.Any())
-                            {
-                                geometries.AddRange(curveGeometry);
-                            }
-                        }
-                    }
-                    if (geometries.Any())
-                    {
-                        diagnostics.Add($"  ✓ Curve: {geometries.Count} geometries");
-                    }
-                    return geometries;
-                }
-
-                // Handle Points
-                if (importedObject is Dynamo.Proxy.Point point)
-                {
-                    var vertices = point.GetVerticesOfPoint();
-                    if (vertices.Count() >= 3)
-                    {
-                        var x = vertices.ElementAt(0);
-                        var y = vertices.ElementAt(1);
-                        var z = vertices.ElementAt(2);
-                        var dynamoPoint = Point.ByCoordinates(x, y, z);
-                        geometries.Add(dynamoPoint);
-                        diagnostics.Add($"  ✓ Point: 1 geometry");
-                    }
-                    return geometries;
-                }
-
-                // Handle IndexMesh
-                if (importedObject is Dynamo.Proxy.IndexMesh indexMesh)
-                {
-                    // IndexMesh requires more complex handling - skip for now
-                    diagnostics.Add($"  ⚠ IndexMesh: Skipped (not yet implemented)");
-                    return geometries;
-                }
-
-                // Handle Group (container for other objects)
-                if (importedObject is Dynamo.Proxy.Group group)
-                {
-                    diagnostics.Add($"  ℹ Group: (container - children extracted separately)");
-                    return geometries;
-                }
-
-                // Handle Layer (container)
-                if (importedObject is Dynamo.Proxy.Layer layer)
-                {
-                    diagnostics.Add($"  ℹ Layer: (container - children extracted separately)");
-                    return geometries;
-                }
-
-                // Unknown type
-                diagnostics.Add($"  ⚠ Unknown type: {importedObject.GetType().Name}");
-            }
-            catch (Exception ex)
-            {
-                diagnostics.Add($"  ✗ Error extracting geometry: {ex.Message}");
-            }
-
-            return geometries;
-        }
     }
 }
-

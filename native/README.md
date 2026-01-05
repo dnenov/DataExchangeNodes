@@ -12,7 +12,7 @@ We adopted the **DynamoATF pattern**: all 117+ native DLLs are kept in a `FDXToC
 
 ### FDXToCollab/ (117 DLLs, ~170MB)
 
-Copied from: `C:\Users\nenovd\Documents\GitHub\DynamoATF\dynamo-package\bin\FDXToCollab\`
+Copied from: `$(APPDATA)Documents\GitHub\DynamoATF\dynamo-package\bin\FDXToCollab\`
 
 #### ACIS Geometry Kernel (~60MB, 37 DLLs)
 - `ASMKERN230A.dll` - Core ACIS kernel (13MB)

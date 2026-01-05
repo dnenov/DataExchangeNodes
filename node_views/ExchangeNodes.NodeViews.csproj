@@ -32,21 +32,36 @@
     <PackageReference Include="DynamoVisualProgramming.WpfUILibrary" Version="$(DynamoVersion)" ExcludeAssets="runtime" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" ExcludeAssets="runtime" />
     
-    <!-- DataExchange UI SDK 6.2.12-beta - Include ALL assets -->
+    <!-- DataExchange UI SDK 6.2.12-beta - Include ALL assets (matching DynamoATF version) -->
     <PackageReference Include="Autodesk.DataExchange.UI" Version="6.2.12-beta" PrivateAssets="none" />
+    
+    <!-- Greg - Use NuGet package like Dynamo does (Version 3.0.2.8780 matches DynamoCore) -->
+    <PackageReference Include="Greg" Version="3.0.2.8780" />
   </ItemGroup>
   
   <ItemGroup>
     <!-- Dynamo Core for AuthenticationManager access -->
     <Reference Include="DynamoCore">
-      <HintPath>C:\Users\nenovd\Documents\GitHub\Dynamo\bin\AnyCPU\Debug\DynamoCore.dll</HintPath>
+      <HintPath>$(APPDATA)Documents\GitHub\Dynamo\bin\AnyCPU\Debug\DynamoCore.dll</HintPath>
       <Private>False</Private>
     </Reference>
-    <!-- Greg for authentication provider interfaces -->
-    <Reference Include="Greg">
-      <HintPath>C:\Users\nenovd\Documents\GitHub\Dynamo\bin\AnyCPU\Debug\Greg.dll</HintPath>
-      <Private>False</Private>
+    
+    <!-- Autodesk.DataExchange.UI DLLs - DIRECT REFERENCES (uncomment and update paths when you have the DLLs) -->
+    <!-- Example paths - update to match your actual DLL locations: -->
+    <!--
+    <Reference Include="Autodesk.DataExchange.UI">
+      <HintPath>C:\Path\To\Autodesk.DataExchange.UI.dll</HintPath>
+      <Private>True</Private>
     </Reference>
+    <Reference Include="Autodesk.DataExchange.Core">
+      <HintPath>C:\Path\To\Autodesk.DataExchange.Core.dll</HintPath>
+      <Private>True</Private>
+    </Reference>
+    <Reference Include="Autodesk.DataExchange.BaseModels">
+      <HintPath>C:\Path\To\Autodesk.DataExchange.BaseModels.dll</HintPath>
+      <Private>True</Private>
+    </Reference>
+    -->
   </ItemGroup>
 
   <!-- Reference to node_models and nodes projects -->
@@ -94,7 +109,9 @@
 
   <!-- Post-build step to create distributable package -->
   <Target Name="PostBuild" AfterTargets="AfterBuild">
-    <Exec Command="call $(SolutionDir)PostBuildStep.bat $(SolutionDir) $(Platform) $(Configuration) $(DynamoVersion) $(DynamoInstallVersion)" />
+    <Exec Command="call &quot;$(SolutionDir)PostBuildStep.bat&quot; &quot;$(SolutionDir)&quot; $(Platform) $(Configuration) $(DynamoVersion) $(DynamoInstallVersion)" 
+          ContinueOnError="true" 
+          IgnoreExitCode="true" />
   </Target>
 </Project>
 

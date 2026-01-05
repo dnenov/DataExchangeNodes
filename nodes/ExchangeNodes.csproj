@@ -32,31 +32,37 @@
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" ExcludeAssets="runtime" />
   </ItemGroup>
 
-  <!-- Translation.Proxy for native FDX geometry operations (from DynamoATF deployed package) -->
+  <!-- System.Net.Http is included in .NET 10.0 framework, no explicit reference needed -->
+
+  <!-- ProtoGeometry for SMB file operations (from Craig Long's updated LibG) -->
   <ItemGroup>
-    <Reference Include="Translation.Proxy">
-      <HintPath>C:\Users\nenovd\AppData\Roaming\Dynamo\Dynamo Core\3.6\packages\DynamoATF\bin\Translation.Proxy.dll</HintPath>
+    <Reference Include="ProtoGeometry">
+      <HintPath>C:\Users\nenovd\Downloads\Dynamo\RootDir\ProtoGeometry.dll</HintPath>
       <Private>False</Private>
     </Reference>
   </ItemGroup>
 
-  <!-- Copy Translation.Proxy.dll and ALL native dependencies from DynamoATF -->
+  <!-- Copy LibG DLLs for runtime (ASM231 version) -->
   <ItemGroup>
-    <!-- Core native library (THE CRITICAL ONE!) -->
-    <None Include="C:\Users\nenovd\AppData\Roaming\Dynamo\Dynamo Core\3.6\packages\DynamoATF\bin\libxlate.dll">
+    <None Include="C:\Users\nenovd\Downloads\Dynamo\RootDir\LibG.Interface.dll">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
-    <!-- Managed wrappers and support libraries -->
-    <None Include="C:\Users\nenovd\AppData\Roaming\Dynamo\Dynamo Core\3.6\packages\DynamoATF\bin\Translation.Proxy.dll">
+    <None Include="C:\Users\nenovd\Downloads\Dynamo\Libg_231_0_0\LibG.AsmPreloader.Managed.dll">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
-    <None Include="C:\Users\nenovd\AppData\Roaming\Dynamo\Dynamo Core\3.6\packages\DynamoATF\bin\Translation.dll">
+    <None Include="C:\Users\nenovd\Downloads\Dynamo\Libg_231_0_0\LibG.AsmPreloader.Unmanaged.dll">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
-    <None Include="C:\Users\nenovd\AppData\Roaming\Dynamo\Dynamo Core\3.6\packages\DynamoATF\bin\Translation.Models.dll">
+    <None Include="C:\Users\nenovd\Downloads\Dynamo\Libg_231_0_0\LibG.dll">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
-    <None Include="C:\Users\nenovd\AppData\Roaming\Dynamo\Dynamo Core\3.6\packages\DynamoATF\bin\Translation.Models.customization.dll">
+    <None Include="C:\Users\nenovd\Downloads\Dynamo\Libg_231_0_0\LibG.Managed.dll">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Include="C:\Users\nenovd\Downloads\Dynamo\Libg_231_0_0\LibG.ProtoInterface.dll">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Include="C:\Users\nenovd\Downloads\Dynamo\Libg_231_0_0\LibGCore.dll">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
   </ItemGroup>

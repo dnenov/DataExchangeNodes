@@ -100,7 +100,7 @@ native/FDXToCollab/
 ### Option 2: Command Line
 
 ```powershell
-cd C:\Users\nenovd\Documents\GitHub\DataExchangeNodes
+cd $(APPDATA)Documents\GitHub\DataExchangeNodes
 
 # Restore dependencies
 dotnet restore
