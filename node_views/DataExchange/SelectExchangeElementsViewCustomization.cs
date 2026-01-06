@@ -42,6 +42,11 @@ namespace DataExchangeNodes.NodeViews.DataExchange
         private DynamoAuthProvider authProvider;
         private bool autoTriggerEnabled = true; // Flag to control auto-trigger
 
+        /// <summary>
+        /// Exposes the DataExchange Client instance for reflection-based inspection
+        /// </summary>
+        public static Client ClientInstance => _client;
+
         public DelegateCommand OpenDataExchangeCommand { get; set; }
 
         /// <summary>
@@ -138,9 +143,10 @@ namespace DataExchangeNodes.NodeViews.DataExchange
                     dynamoViewModel?.Model?.Logger?.Log("SelectExchangeElements: Reusing existing client and ReadModel");
                 }
                 
-                // Register auth provider for LoadGeometryFromExchange node
+                // Register auth provider and client for LoadGeometryFromExchange node
                 DataExchangeNodes.DataExchange.LoadGeometryFromExchange.RegisterAuthProvider(() => authProvider.GetToken());
-                dynamoViewModel?.Model?.Logger?.Log("SelectExchangeElements: Auth provider registered for LoadGeometryFromExchange");
+                //DataExchangeNodes.DataExchange.LoadGeometryFromExchange.RegisterClient(_client);
+                dynamoViewModel?.Model?.Logger?.Log("SelectExchangeElements: Auth provider and Client registered for LoadGeometryFromExchange");
                 
                 // Always update the current node reference
                 ReadExchangeModel.CurrentNode = nodeModel;
@@ -153,7 +159,32 @@ namespace DataExchangeNodes.NodeViews.DataExchange
                     dynamoViewModel?.Model?.Logger?.Log("SelectExchangeElements: Initializing InteropBridge...");
                     var bridgeOptions = InteropBridgeOptions.FromClient(_client);
                     bridgeOptions.Exchange = _readModel;
-                    bridgeOptions.HostWindowHandle = Process.GetCurrentProcess().MainWindowHandle;
+                    
+                    // Try to get the actual Dynamo window handle
+                    IntPtr windowHandle = IntPtr.Zero;
+                    try
+                    {
+                        // Try Application.Current.MainWindow first (most reliable for WPF)
+                        if (Application.Current?.MainWindow != null)
+                        {
+                            var helper = new System.Windows.Interop.WindowInteropHelper(Application.Current.MainWindow);
+                            windowHandle = helper.Handle;
+                            dynamoViewModel?.Model?.Logger?.Log($"SelectExchangeElements: Got window handle from Application.Current.MainWindow: {windowHandle}");
+                        }
+                        else
+                        {
+                            // Fallback to process main window
+                            windowHandle = Process.GetCurrentProcess().MainWindowHandle;
+                            dynamoViewModel?.Model?.Logger?.Log($"SelectExchangeElements: Using Process.MainWindowHandle: {windowHandle}");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        dynamoViewModel?.Model?.Logger?.Log($"SelectExchangeElements: Error getting window handle: {ex.Message}");
+                        windowHandle = Process.GetCurrentProcess().MainWindowHandle;
+                    }
+                    
+                    bridgeOptions.HostWindowHandle = windowHandle;
                     bridgeOptions.Invoker = new MainThreadInvoker(
                         System.Windows.Threading.Dispatcher.CurrentDispatcher);
 
@@ -169,7 +200,35 @@ namespace DataExchangeNodes.NodeViews.DataExchange
                 // Launch the DataExchange UI
                 dynamoViewModel?.Model?.Logger?.Log("SelectExchangeElements: Launching DataExchange UI...");
                 await _bridge.LaunchConnectorUiAsync();
+                dynamoViewModel?.Model?.Logger?.Log("SelectExchangeElements: LaunchConnectorUiAsync completed");
+                
                 _bridge.SetWindowState(Autodesk.DataExchange.UI.Core.Enums.WindowState.Show);
+                dynamoViewModel?.Model?.Logger?.Log("SelectExchangeElements: SetWindowState(Show) called");
+                
+                // Try to bring the window to front and ensure it's visible
+                try
+                {
+                    // Give the UI a moment to initialize
+                    await Task.Delay(200);
+                    
+                    // Try to activate the Dynamo main window (parent)
+                    if (Application.Current?.MainWindow != null)
+                    {
+                        Application.Current.MainWindow.Activate();
+                        Application.Current.MainWindow.BringIntoView();
+                        Application.Current.MainWindow.Focus();
+                        dynamoViewModel?.Model?.Logger?.Log("SelectExchangeElements: Activated Dynamo main window");
+                    }
+                    
+                    // Also try to set window state again after a delay to ensure it's shown
+                    await Task.Delay(100);
+                    _bridge.SetWindowState(Autodesk.DataExchange.UI.Core.Enums.WindowState.Show);
+                }
+                catch (Exception ex)
+                {
+                    dynamoViewModel?.Model?.Logger?.Log($"SelectExchangeElements: Could not bring window to front: {ex.Message}");
+                }
+                
                 dynamoViewModel?.Model?.Logger?.Log("SelectExchangeElements: DataExchange UI launched and shown");
 
                 contentText.Text = "UI opened";
