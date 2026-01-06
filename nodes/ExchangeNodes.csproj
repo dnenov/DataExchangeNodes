@@ -26,18 +26,45 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="DynamoVisualProgramming.Core" Version="$(DynamoVersion)" ExcludeAssets="runtime" />
-    <PackageReference Include="DynamoVisualProgramming.DynamoServices" Version="$(DynamoVersion)" ExcludeAssets="runtime" />
-    <PackageReference Include="DynamoVisualProgramming.ZeroTouchLibrary" Version="$(DynamoVersion)" ExcludeAssets="runtime" />
+    <!-- Include compile assets for IntelliSense, but exclude runtime to avoid copying DLLs (Dynamo provides them) -->
+    <PackageReference Include="DynamoVisualProgramming.Core" Version="$(DynamoVersion)">
+      <ExcludeAssets>runtime;native;contentfiles</ExcludeAssets>
+      <IncludeAssets>compile;build</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="DynamoVisualProgramming.DynamoServices" Version="$(DynamoVersion)">
+      <ExcludeAssets>runtime;native;contentfiles</ExcludeAssets>
+      <IncludeAssets>compile;build</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="DynamoVisualProgramming.ZeroTouchLibrary" Version="$(DynamoVersion)">
+      <ExcludeAssets>runtime;native;contentfiles</ExcludeAssets>
+      <IncludeAssets>compile;build</IncludeAssets>
+    </PackageReference>
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" ExcludeAssets="runtime" />
   </ItemGroup>
 
   <!-- System.Net.Http is included in .NET 10.0 framework, no explicit reference needed -->
 
-  <!-- ProtoGeometry for SMB file operations (from Craig Long's updated LibG) -->
+  <!-- ProtoGeometry and DesignScript assemblies for IntelliSense (compile-time only, not copied to output) -->
+  <!-- These references help IntelliSense resolve types, but Private=False ensures they're not copied to output -->
   <ItemGroup>
     <Reference Include="ProtoGeometry">
       <HintPath>C:\Users\nenovd\Downloads\Dynamo\RootDir\ProtoGeometry.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <!-- Try to reference DesignScriptBuiltin from Dynamo installation or NuGet cache -->
+    <Reference Include="DesignScriptBuiltin" Condition="Exists('C:\Users\nenovd\Downloads\Dynamo\RootDir\DesignScriptBuiltin.dll')">
+      <HintPath>C:\Users\nenovd\Downloads\Dynamo\RootDir\DesignScriptBuiltin.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+  </ItemGroup>
+  
+  <!-- Alternative: Reference from NuGet package cache (for IntelliSense) -->
+  <PropertyGroup>
+    <DesignScriptAssemblyPath Condition="'$(DesignScriptAssemblyPath)' == ''">$(UserProfile)\.nuget\packages\dynamovisualprogramming.core\$(DynamoVersion)\lib\net472</DesignScriptAssemblyPath>
+  </PropertyGroup>
+  <ItemGroup Condition="Exists('$(DesignScriptAssemblyPath)\DesignScriptBuiltin.dll')">
+    <Reference Include="DesignScriptBuiltin">
+      <HintPath>$(DesignScriptAssemblyPath)\DesignScriptBuiltin.dll</HintPath>
       <Private>False</Private>
     </Reference>
   </ItemGroup>
