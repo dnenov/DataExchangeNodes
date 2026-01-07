@@ -11,6 +11,7 @@ using Autodesk.DesignScript.Runtime;
 // Required for IntPtr and ACIS pointer operations
 using System.Runtime.InteropServices;
 using System.Reflection;
+using System.Text;
 
 namespace DataExchangeNodes.DataExchange
 {
@@ -21,6 +22,146 @@ namespace DataExchangeNodes.DataExchange
     {
         // Singleton pattern - auth provider registered by SelectExchangeElements view
         private static Func<string> _getTokenFunc = null;
+        
+        // Paths to the new DLLs from colleague
+        private static readonly string DownloadsRootDir = @"C:\Users\nenovd\Downloads\Dynamo\RootDir";
+        private static readonly string DownloadsLibgDir = @"C:\Users\nenovd\Downloads\Dynamo\Libg_231_0_0";
+        private static readonly string NewProtoGeometryPath = Path.Combine(DownloadsRootDir, "ProtoGeometry.dll");
+        private static Assembly _newProtoGeometryAssembly = null;
+        private static Type _geometryTypeFromNewAssembly = null;
+        private static bool _dependenciesLoaded = false;
+        
+        [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+        private static extern bool SetDllDirectory(string lpPathName);
+        
+        [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+        private static extern int AddDllDirectory(string lpPathName);
+        
+        /// <summary>
+        /// Loads the LibG dependencies first, then ProtoGeometry.dll
+        /// </summary>
+        private static void LoadLibGDependencies(List<string> diagnostics)
+        {
+            if (_dependenciesLoaded)
+                return;
+            
+            try
+            {
+                diagnostics?.Add("Loading LibG dependencies from Downloads folder...");
+                
+                // Add the LibG directory to DLL search path for native DLLs
+                try
+                {
+                    SetDllDirectory(DownloadsLibgDir);
+                    diagnostics?.Add($"  ✓ Added {DownloadsLibgDir} to DLL search path");
+                }
+                catch (Exception ex)
+                {
+                    diagnostics?.Add($"  ⚠️ Failed to add DLL directory: {ex.Message}");
+                }
+                
+                // Load managed LibG DLLs (native DLLs will be found via DLL search path)
+                var managedDlls = new[]
+                {
+                    "LibG.Managed.dll",
+                    "LibG.ProtoInterface.dll",
+                    "LibG.AsmPreloader.Managed.dll"
+                };
+                
+                foreach (var dllName in managedDlls)
+                {
+                    var dllPath = Path.Combine(DownloadsLibgDir, dllName);
+                    if (File.Exists(dllPath))
+                    {
+                        try
+                        {
+                            Assembly.LoadFrom(dllPath);
+                            diagnostics?.Add($"  ✓ Loaded: {dllName}");
+                        }
+                        catch (Exception ex)
+                        {
+                            diagnostics?.Add($"  ⚠️ Failed to load {dllName}: {ex.Message}");
+                        }
+                    }
+                    else
+                    {
+                        diagnostics?.Add($"  ⚠️ Not found: {dllName}");
+                    }
+                }
+                
+                // Note: LibGCore.dll and LibG.dll are native DLLs - they'll be loaded automatically
+                // when the managed code references them, as long as they're in the DLL search path
+                diagnostics?.Add($"  Note: LibGCore.dll and LibG.dll are native DLLs (will be loaded on demand)");
+                
+                // Load LibG.Interface.dll
+                var libgInterfacePath = Path.Combine(DownloadsRootDir, "LibG.Interface.dll");
+                if (File.Exists(libgInterfacePath))
+                {
+                    try
+                    {
+                        Assembly.LoadFrom(libgInterfacePath);
+                        diagnostics?.Add($"  ✓ Loaded: LibG.Interface.dll");
+                    }
+                    catch (Exception ex)
+                    {
+                        diagnostics?.Add($"  ⚠️ Failed to load LibG.Interface.dll: {ex.Message}");
+                    }
+                }
+                
+                _dependenciesLoaded = true;
+            }
+            catch (Exception ex)
+            {
+                diagnostics?.Add($"⚠️ Error loading LibG dependencies: {ex.Message}");
+            }
+        }
+        
+        /// <summary>
+        /// Loads the new ProtoGeometry.dll and gets the Geometry type from it
+        /// </summary>
+        private static Type GetGeometryTypeFromNewAssembly(List<string> diagnostics)
+        {
+            if (_geometryTypeFromNewAssembly != null)
+                return _geometryTypeFromNewAssembly;
+            
+            try
+            {
+                // Load LibG dependencies first
+                LoadLibGDependencies(diagnostics);
+                
+                if (!File.Exists(NewProtoGeometryPath))
+                {
+                    diagnostics?.Add($"⚠️ New ProtoGeometry.dll not found at: {NewProtoGeometryPath}");
+                    diagnostics?.Add($"   Falling back to default Geometry type");
+                    return typeof(Geometry);
+                }
+                
+                diagnostics?.Add($"Loading new ProtoGeometry.dll from: {NewProtoGeometryPath}");
+                _newProtoGeometryAssembly = Assembly.LoadFrom(NewProtoGeometryPath);
+                diagnostics?.Add($"✓ Loaded assembly: {_newProtoGeometryAssembly.FullName}");
+                
+                // Get Geometry type from the new assembly
+                _geometryTypeFromNewAssembly = _newProtoGeometryAssembly.GetType("Autodesk.DesignScript.Geometry.Geometry");
+                if (_geometryTypeFromNewAssembly == null)
+                {
+                    diagnostics?.Add($"⚠️ Could not find Geometry type in new assembly, falling back to default");
+                    return typeof(Geometry);
+                }
+                
+                diagnostics?.Add($"✓ Found Geometry type in new assembly: {_geometryTypeFromNewAssembly.FullName}");
+                return _geometryTypeFromNewAssembly;
+            }
+            catch (Exception ex)
+            {
+                diagnostics?.Add($"⚠️ Error loading new ProtoGeometry.dll: {ex.Message}");
+                if (ex.InnerException != null)
+                {
+                    diagnostics?.Add($"   Inner: {ex.InnerException.Message}");
+                }
+                diagnostics?.Add($"   Falling back to default Geometry type");
+                return typeof(Geometry);
+            }
+        }
 
         /// <summary>
         /// Registers the token provider function (called by SelectExchangeElements view)
@@ -29,6 +170,216 @@ namespace DataExchangeNodes.DataExchange
         public static void RegisterAuthProvider(Func<string> getTokenFunc)
         {
             _getTokenFunc = getTokenFunc;
+        }
+
+        /// <summary>
+        /// Standalone test node: Loads geometry from an SMB file on disk.
+        /// Use this to test if SMB files work with the LibG implementation.
+        /// </summary>
+        /// <param name="smbFilePath">Full path to the SMB file on disk</param>
+        /// <param name="unit">Unit type for geometry (default: "kUnitType_CentiMeter"). Options: kUnitType_CentiMeter, kUnitType_Meter, kUnitType_Feet, kUnitType_Inch</param>
+        /// <returns>Dictionary with "geometries" (list of Dynamo geometry), "log" (diagnostic messages), and "success" (boolean)</returns>
+        [MultiReturn(new[] { "geometries", "log", "success" })]
+        public static Dictionary<string, object> ImportSMBFileFromPath(
+            string smbFilePath,
+            string unit = "kUnitType_CentiMeter")
+        {
+            var geometries = new List<Geometry>();
+            var diagnostics = new List<string>();
+            bool success = false;
+
+            try
+            {
+                diagnostics.Add("=== Standalone SMB File Import Test ===");
+                diagnostics.Add($"SMB File Path: {smbFilePath}");
+                diagnostics.Add($"Unit: {unit}");
+
+                if (string.IsNullOrEmpty(smbFilePath))
+                {
+                    throw new ArgumentNullException(nameof(smbFilePath), "SMB file path cannot be null or empty");
+                }
+
+                if (!File.Exists(smbFilePath))
+                {
+                    throw new FileNotFoundException($"SMB file not found: {smbFilePath}");
+                }
+
+                var fileInfo = new FileInfo(smbFilePath);
+                diagnostics.Add($"File exists: ✓");
+                diagnostics.Add($"File size: {fileInfo.Length} bytes");
+                diagnostics.Add($"File extension: {fileInfo.Extension}");
+                
+                // Normalize the path
+                var normalizedPath = Path.GetFullPath(smbFilePath);
+                diagnostics.Add($"Original path: {smbFilePath}");
+                diagnostics.Add($"Normalized path: {normalizedPath}");
+                
+                // Check if path has spaces or special characters
+                if (normalizedPath.Contains(" "))
+                {
+                    diagnostics.Add($"⚠️ Path contains spaces - copying to temp location without spaces");
+                    // Copy to temp directory without spaces
+                    var tempDir = Path.Combine(Path.GetTempPath(), "DataExchangeNodes");
+                    if (!Directory.Exists(tempDir))
+                        Directory.CreateDirectory(tempDir);
+                    
+                    var tempFileName = Path.GetFileName(smbFilePath);
+                    var tempPath = Path.Combine(tempDir, tempFileName);
+                    File.Copy(normalizedPath, tempPath, overwrite: true);
+                    smbFilePath = tempPath;
+                    diagnostics.Add($"Copied to: {smbFilePath}");
+                }
+                else
+                {
+                    smbFilePath = normalizedPath;
+                }
+                
+                // Convert unit string to mmPerUnit (millimeters per unit)
+                double mmPerUnit = 10.0; // Default to cm
+                if (unit.Contains("Meter") && !unit.Contains("Centi"))
+                    mmPerUnit = 1000.0;
+                else if (unit.Contains("CentiMeter") || unit.Contains("cm"))
+                    mmPerUnit = 10.0;
+                else if (unit.Contains("Feet") || unit.Contains("ft"))
+                    mmPerUnit = 304.8;
+                else if (unit.Contains("Inch") || unit.Contains("in"))
+                    mmPerUnit = 25.4;
+                
+                diagnostics.Add($"mmPerUnit: {mmPerUnit} (for unit: {unit})");
+                
+                // Get Geometry type from the new ProtoGeometry.dll (not the NuGet one)
+                var geometryType = GetGeometryTypeFromNewAssembly(diagnostics);
+                
+                // Try to find all ImportFromSMB methods
+                var allImportMethods = geometryType.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)
+                    .Where(m => m.Name == "ImportFromSMB")
+                    .ToList();
+                
+                diagnostics.Add($"Found {allImportMethods.Count} ImportFromSMB method(s):");
+                foreach (var method in allImportMethods)
+                {
+                    var paramInfo = method.GetParameters();
+                    var paramStr = string.Join(", ", paramInfo.Select(p => $"{p.ParameterType.Name} {p.Name}"));
+                    var visibility = method.IsPublic ? "public" : "internal";
+                    diagnostics.Add($"  [{visibility}] {method.ReturnType.Name} ImportFromSMB({paramStr})");
+                }
+                
+                // Try the public method first
+                var importMethod = allImportMethods.FirstOrDefault(m => 
+                    m.IsPublic && 
+                    m.GetParameters().Length == 2 &&
+                    m.GetParameters()[0].ParameterType == typeof(string) &&
+                    m.GetParameters()[1].ParameterType == typeof(double));
+                
+                Geometry[] result = null;
+                
+                if (importMethod != null)
+                {
+                    diagnostics.Add($"Trying public method: ImportFromSMB(String, Double)...");
+                    try
+                    {
+                        result = importMethod.Invoke(null, new object[] { smbFilePath, mmPerUnit }) as Geometry[];
+                        if (result != null && result.Length > 0)
+                        {
+                            diagnostics.Add($"✓ Public method succeeded");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        diagnostics.Add($"⚠️ Public method failed: {ex.InnerException?.Message ?? ex.Message}");
+                    }
+                }
+                
+                // If public method failed or returned empty, try the internal method with ref parameter
+                if (result == null || result.Length == 0)
+                {
+                    var internalMethod = allImportMethods.FirstOrDefault(m => 
+                        !m.IsPublic && 
+                        m.GetParameters().Length == 2 &&
+                        m.GetParameters()[0].ParameterType.IsByRef &&
+                        m.GetParameters()[1].ParameterType == typeof(double));
+                    
+                    if (internalMethod != null)
+                    {
+                        diagnostics.Add($"Trying internal method with ref parameter...");
+                        try
+                        {
+                            // For ref parameters, we need to pass a boxed string
+                            var fileNameParam = smbFilePath;
+                            var paramArray = new object[] { fileNameParam, mmPerUnit };
+                            var invokeResult = internalMethod.Invoke(null, paramArray);
+                            
+                            // The internal method returns IGeometryEntity[], need to convert
+                            if (invokeResult != null)
+                            {
+                                var entityArray = invokeResult as System.Collections.IEnumerable;
+                                if (entityArray != null)
+                                {
+                                    result = new List<Geometry>().ToArray();
+                                    foreach (var entity in entityArray)
+                                    {
+                                        // Try to cast to Geometry
+                                        if (entity is Geometry geo)
+                                        {
+                                            var list = result.ToList();
+                                            list.Add(geo);
+                                            result = list.ToArray();
+                                        }
+                                    }
+                                    if (result.Length > 0)
+                                    {
+                                        diagnostics.Add($"✓ Internal method succeeded");
+                                    }
+                                }
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            diagnostics.Add($"⚠️ Internal method failed: {ex.InnerException?.Message ?? ex.Message}");
+                        }
+                    }
+                }
+                
+                if (result == null)
+                {
+                    throw new InvalidOperationException($"All ImportFromSMB methods failed. Check diagnostics for details.");
+                }
+                
+                if (result != null && result.Length > 0)
+                {
+                    geometries.AddRange(result);
+                    diagnostics.Add($"✓ Successfully loaded {geometries.Count} geometry object(s) from SMB file");
+                    success = true;
+                }
+                else if (result != null && result.Length == 0)
+                {
+                    diagnostics.Add($"⚠️ ImportFromSMB returned empty array - no geometries loaded");
+                }
+                else
+                {
+                    diagnostics.Add($"⚠️ ImportFromSMB returned null - no geometries loaded");
+                }
+            }
+            catch (Exception ex)
+            {
+                diagnostics.Add($"\n✗ ERROR: {ex.GetType().Name}: {ex.Message}");
+                diagnostics.Add($"Stack: {ex.StackTrace}");
+                if (ex.InnerException != null)
+                {
+                    diagnostics.Add($"Inner Exception: {ex.InnerException.GetType().Name}: {ex.InnerException.Message}");
+                    if (ex.InnerException.StackTrace != null)
+                    {
+                        diagnostics.Add($"Inner Stack: {ex.InnerException.StackTrace}");
+                    }
+                }
+            }
+
+            return new Dictionary<string, object>
+            {
+                { "geometries", geometries },
+                { "log", string.Join("\n", diagnostics) },
+                { "success", success }
+            };
         }
 
         /// <summary>
@@ -785,8 +1136,117 @@ namespace DataExchangeNodes.DataExchange
         // Removed unused methods: TryDownloadViaElementDataModelAsync, TryDownloadViaGetAllAssetInfosWithTranslatedGeometryPath, 
         // TryDownloadViaDirectSmbMethod, LogInternalFormatConversionMethods, DownloadSMBViaHttpAPI
 
+
+        /// <summary>
+        /// Inspects ProtoGeometry assembly to find SMB-related methods
+        /// </summary>
+        private static void InspectProtoGeometryForSMBMethods(List<string> diagnostics)
+        {
+            diagnostics.Add("\n=== INSPECTING PROTOGEOMETRY ASSEMBLY FOR SMB METHODS ===");
+            
+            try
+            {
+                // Get the Geometry type and its assembly
+                var geometryType = typeof(Geometry);
+                var assembly = geometryType.Assembly;
+                
+                diagnostics.Add($"\n1. PROTOGEOMETRY ASSEMBLY LOCATION:");
+                diagnostics.Add($"   Full Name: {assembly.FullName}");
+                diagnostics.Add($"   Location: {assembly.Location}");
+                diagnostics.Add($"   CodeBase: {assembly.CodeBase}");
+                
+                // Get all types in the assembly
+                var allTypes = assembly.GetTypes();
+                diagnostics.Add($"\n2. ASSEMBLY CONTAINS {allTypes.Length} TYPES");
+                
+                // Find Geometry class
+                diagnostics.Add($"\n3. GEOMETRY CLASS:");
+                diagnostics.Add($"   Full Name: {geometryType.FullName}");
+                diagnostics.Add($"   Namespace: {geometryType.Namespace}");
+                
+                // Get all methods on Geometry class
+                var allMethods = geometryType.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance | BindingFlags.FlattenHierarchy);
+                diagnostics.Add($"   Total Methods: {allMethods.Length}");
+                
+                // Find SMB-related methods on Geometry class
+                var smbMethods = allMethods.Where(m => 
+                    m.Name.ToLowerInvariant().Contains("smb")).ToList();
+                
+                diagnostics.Add($"\n4. SMB-RELATED METHODS ON GEOMETRY CLASS: {smbMethods.Count}");
+                if (smbMethods.Any())
+                {
+                    foreach (var method in smbMethods)
+                    {
+                        var paramInfo = method.GetParameters();
+                        var paramStr = string.Join(", ", paramInfo.Select(p => $"{p.ParameterType.Name} {p.Name}"));
+                        var returnType = method.ReturnType.Name;
+                        var isStatic = method.IsStatic ? "static" : "instance";
+                        var visibility = method.IsPublic ? "public" : (method.IsPrivate ? "private" : (method.IsFamily ? "protected" : "internal"));
+                        
+                        diagnostics.Add($"   [{visibility}] [{isStatic}] {returnType} {method.Name}({paramStr})");
+                    }
+                }
+                else
+                {
+                    diagnostics.Add("   ⚠️ NO SMB METHODS FOUND ON GEOMETRY CLASS");
+                }
+                
+                // Search ALL types in the assembly for SMB methods
+                diagnostics.Add($"\n5. SEARCHING ALL TYPES IN ASSEMBLY FOR SMB METHODS:");
+                var allSmbMethods = new List<(Type type, MethodInfo method)>();
+                
+                foreach (var type in allTypes)
+                {
+                    try
+                    {
+                        var methods = type.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance | BindingFlags.FlattenHierarchy);
+                        var typeSmbMethods = methods.Where(m => m.Name.ToLowerInvariant().Contains("smb"));
+                        
+                        foreach (var method in typeSmbMethods)
+                        {
+                            allSmbMethods.Add((type, method));
+                        }
+                    }
+                    catch
+                    {
+                        // Skip types we can't inspect
+                    }
+                }
+                
+                diagnostics.Add($"   Found {allSmbMethods.Count} SMB method(s) across all types:");
+                if (allSmbMethods.Any())
+                {
+                    foreach (var (type, method) in allSmbMethods)
+                    {
+                        var paramInfo = method.GetParameters();
+                        var paramStr = string.Join(", ", paramInfo.Select(p => $"{p.ParameterType.Name} {p.Name}"));
+                        var returnType = method.ReturnType.Name;
+                        var isStatic = method.IsStatic ? "static" : "instance";
+                        var visibility = method.IsPublic ? "public" : (method.IsPrivate ? "private" : (method.IsFamily ? "protected" : "internal"));
+                        
+                        diagnostics.Add($"   {type.FullName}.{method.Name}({paramStr})");
+                        diagnostics.Add($"     - Return: {returnType}");
+                        diagnostics.Add($"     - Visibility: {visibility}");
+                        diagnostics.Add($"     - Static: {isStatic}");
+                    }
+                }
+                else
+                {
+                    diagnostics.Add("   ⚠️ NO SMB METHODS FOUND IN ENTIRE ASSEMBLY");
+                }
+                
+                diagnostics.Add($"\n=== INSPECTION COMPLETE ===");
+            }
+            catch (Exception ex)
+            {
+                diagnostics.Add($"\n✗ ERROR DURING INSPECTION: {ex.GetType().Name}: {ex.Message}");
+                diagnostics.Add($"   Stack: {ex.StackTrace}");
+            }
+        }
+
         /// <summary>
         /// Loads geometry from SMB file using ProtoGeometry APIs
+        /// Uses the new SMB import APIs provided by Craig Long's DLLs
         /// </summary>
         private static List<Geometry> LoadGeometryFromSMB(
             string smbFilePath,
@@ -799,180 +1259,120 @@ namespace DataExchangeNodes.DataExchange
             {
                 diagnostics.Add("\nLoading via ProtoGeometry SMB APIs...");
 
-                // Use ProtoGeometry to open SMB file
-                // Try reflection-based approach to find the SMB opening method
-                var protoGeometryAssembly = System.Reflection.Assembly.LoadFrom(
-                    Path.Combine(Path.GetDirectoryName(typeof(Geometry).Assembly.Location), "ProtoGeometry.dll"));
-                
-                if (protoGeometryAssembly == null)
+                if (!File.Exists(smbFilePath))
                 {
-                    // Fallback: try loading from common locations
-                    var possiblePaths = new[]
-                    {
-                        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), 
-                            @"Dynamo\Dynamo Core\4.1\ProtoGeometry.dll")
-                    };
-
-                    foreach (var path in possiblePaths)
-                    {
-                        if (File.Exists(path))
-                        {
-                            protoGeometryAssembly = System.Reflection.Assembly.LoadFrom(path);
-                            break;
-                        }
-                    }
+                    throw new FileNotFoundException($"SMB file not found: {smbFilePath}");
                 }
 
-                if (protoGeometryAssembly == null)
-                {
-                    throw new InvalidOperationException("ProtoGeometry.dll not found. Please ensure it's in the correct location.");
-                }
+                diagnostics.Add($"  SMB file path: {smbFilePath}");
+                diagnostics.Add($"  File size: {new FileInfo(smbFilePath).Length} bytes");
+                diagnostics.Add($"  Unit: {unit}");
 
-                diagnostics.Add($"  ✓ Loaded ProtoGeometry.dll from: {protoGeometryAssembly.Location}");
-
-                // Look for SMB-related types/methods
-                var types = protoGeometryAssembly.GetTypes();
+                // Convert unit string to mmPerUnit (millimeters per unit)
+                // kUnitType_CentiMeter = 10.0 mm/cm
+                // kUnitType_Meter = 1000.0 mm/m
+                // kUnitType_Feet = 304.8 mm/ft
+                // kUnitType_Inch = 25.4 mm/in
+                double mmPerUnit = 10.0; // Default to cm
+                if (unit.Contains("Meter") && !unit.Contains("Centi"))
+                    mmPerUnit = 1000.0;
+                else if (unit.Contains("CentiMeter") || unit.Contains("cm"))
+                    mmPerUnit = 10.0;
+                else if (unit.Contains("Feet") || unit.Contains("ft"))
+                    mmPerUnit = 304.8;
+                else if (unit.Contains("Inch") || unit.Contains("in"))
+                    mmPerUnit = 25.4;
                 
-                var smbType = types.FirstOrDefault(t => 
-                    t.Name.Contains("SMB") || 
-                    t.Name.Contains("FileLoader") || 
-                    t.Name.Contains("GeometryLoader"));
-
-                // Also check for methods on Geometry class itself
-                var geometryType = typeof(Geometry);
-                var geometryMethods = geometryType.GetMethods(BindingFlags.Public | BindingFlags.Static | BindingFlags.Instance);
-                var smbMethodsOnGeometry = geometryMethods.Where(m => 
-                    m.Name.ToLowerInvariant().Contains("smb") ||
-                    m.Name.ToLowerInvariant().Contains("import") ||
-                    m.Name.ToLowerInvariant().Contains("fromfile") ||
-                    m.Name.ToLowerInvariant().Contains("load")).ToList();
+                // Normalize the path
+                var normalizedPath = Path.GetFullPath(smbFilePath);
+                diagnostics.Add($"  Original path: {smbFilePath}");
+                diagnostics.Add($"  Normalized path: {normalizedPath}");
                 
-                if (smbType != null)
+                // If path has spaces, copy to temp location without spaces
+                if (normalizedPath.Contains(" "))
                 {
-                    diagnostics.Add($"  Found type: {smbType.FullName}");
-
-                    // Try to find Open/Load methods
-                    var openMethod = smbType.GetMethods(System.Reflection.BindingFlags.Public | 
-                        System.Reflection.BindingFlags.Static | 
-                        System.Reflection.BindingFlags.Instance)
-                        .FirstOrDefault(m => 
-                            (m.Name.Contains("Open") || m.Name.Contains("Load")) && 
-                            m.GetParameters().Length >= 1);
-
-                    if (openMethod != null)
-                    {
-                        diagnostics.Add($"  Found method: {openMethod.Name}");
-
-                        object loader = null;
-                        if (openMethod.IsStatic)
-                        {
-                            // Static method - call directly
-                            var result = openMethod.Invoke(null, new object[] { smbFilePath });
-                            if (result is IEnumerable<Geometry> geoEnumerable)
-                            {
-                                geometries.AddRange(geoEnumerable);
-                            }
-                            else if (result is Geometry geo)
-                            {
-                                geometries.Add(geo);
-                            }
-                        }
-                        else
-                        {
-                            // Instance method - create instance first
-                            loader = Activator.CreateInstance(smbType);
-                            var result = openMethod.Invoke(loader, new object[] { smbFilePath });
-                            if (result is IEnumerable<Geometry> geoEnumerable)
-                            {
-                                geometries.AddRange(geoEnumerable);
-                            }
-                            else if (result is Geometry geo)
-                            {
-                                geometries.Add(geo);
-                            }
-                        }
-
-                        // Try to get geometry from loaded objects
-                        if (loader != null)
-                        {
-                            var getGeometryMethod = loader.GetType().GetMethods()
-                                .FirstOrDefault(m => m.Name.Contains("GetGeometry") || m.Name.Contains("GetGeometries"));
-                            
-                            if (getGeometryMethod != null)
-                            {
-                                var geoResult = getGeometryMethod.Invoke(loader, null);
-                                if (geoResult is IEnumerable<Geometry> geoEnumerable)
-                                {
-                                    geometries.AddRange(geoEnumerable);
-                                }
-                            }
-                        }
-                    }
-                }
-                
-                // If no SMB type found, try methods on Geometry class
-                if (smbType == null && smbMethodsOnGeometry.Any())
-                {
-                    diagnostics.Add("  ⚠️ SMB loader type not found, trying methods on Geometry class...");
-                    foreach (var method in smbMethodsOnGeometry)
-                    {
-                        try
-                        {
-                            diagnostics.Add($"  Trying Geometry.{method.Name}...");
-                            var methodParams = method.GetParameters();
-                            
-                            // Try to invoke with SMB file path
-                            object[] invokeParams = new object[methodParams.Length];
-                            for (int i = 0; i < methodParams.Length; i++)
-                            {
-                                var param = methodParams[i];
-                                if (param.ParameterType == typeof(string))
-                                {
-                                    invokeParams[i] = smbFilePath;
-                                }
-                                else if (param.ParameterType == typeof(byte[]))
-                                {
-                                    invokeParams[i] = File.ReadAllBytes(smbFilePath);
-                                }
-                                else
-                                {
-                                    invokeParams[i] = param.HasDefaultValue ? param.DefaultValue : null;
-                                }
-                            }
-                            
-                            var result = method.Invoke(null, invokeParams);
-                            if (result != null)
-                            {
-                                if (result is IEnumerable<Geometry> geoEnumerable)
-                                {
-                                    geometries.AddRange(geoEnumerable);
-                                    diagnostics.Add($"  ✓ Successfully loaded {geometries.Count} geometries using Geometry.{method.Name}");
-                                    break;
-                                }
-                                else if (result is Geometry geo)
-                                {
-                                    geometries.Add(geo);
-                                    diagnostics.Add($"  ✓ Successfully loaded 1 geometry using Geometry.{method.Name}");
-                                    break;
-                                }
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            diagnostics.Add($"  ⚠️ Geometry.{method.Name} failed: {ex.Message}");
-                        }
-                    }
-                }
-
-                if (geometries.Count == 0)
-                {
-                    diagnostics.Add("  ⚠️ No geometries loaded - ProtoGeometry API may need adjustment");
+                    diagnostics.Add($"  ⚠️ Path contains spaces - copying to temp location");
+                    var tempDir = Path.Combine(Path.GetTempPath(), "DataExchangeNodes");
+                    if (!Directory.Exists(tempDir))
+                        Directory.CreateDirectory(tempDir);
+                    
+                    var tempFileName = Path.GetFileName(smbFilePath);
+                    var tempPath = Path.Combine(tempDir, tempFileName);
+                    File.Copy(normalizedPath, tempPath, overwrite: true);
+                    smbFilePath = tempPath;
+                    diagnostics.Add($"  Copied to: {smbFilePath}");
                 }
                 else
                 {
-                    diagnostics.Add($"  ✓ Successfully loaded {geometries.Count} geometry object(s)");
+                    smbFilePath = normalizedPath;
                 }
-
+                
+                // Get Geometry type from the new ProtoGeometry.dll (not the NuGet one)
+                var geometryType = GetGeometryTypeFromNewAssembly(diagnostics);
+                
+                // Find all ImportFromSMB methods
+                var allImportMethods = geometryType.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)
+                    .Where(m => m.Name == "ImportFromSMB")
+                    .ToList();
+                
+                diagnostics.Add($"  Found {allImportMethods.Count} ImportFromSMB method(s)");
+                
+                // Try the public method first
+                var importMethod = allImportMethods.FirstOrDefault(m => 
+                    m.IsPublic && 
+                    m.GetParameters().Length == 2 &&
+                    m.GetParameters()[0].ParameterType == typeof(string) &&
+                    m.GetParameters()[1].ParameterType == typeof(double));
+                
+                Geometry[] result = null;
+                
+                if (importMethod != null)
+                {
+                    diagnostics.Add($"  Trying public method: ImportFromSMB(String, Double)...");
+                    try
+                    {
+                        result = importMethod.Invoke(null, new object[] { smbFilePath, mmPerUnit }) as Geometry[];
+                        if (result != null && result.Length > 0)
+                        {
+                            diagnostics.Add($"  ✓ Public method succeeded");
+                        }
+                        else if (result != null)
+                        {
+                            diagnostics.Add($"  ⚠️ Public method returned empty array");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        diagnostics.Add($"  ⚠️ Public method failed: {ex.InnerException?.GetType().Name ?? ex.GetType().Name}: {ex.InnerException?.Message ?? ex.Message}");
+                        result = null; // Try internal method as fallback
+                    }
+                }
+                
+                // If public method failed, the error is in the native LibG code
+                // The internal method would have the same issue since it calls the same native code
+                if (result == null || result.Length == 0)
+                {
+                    throw new InvalidOperationException(
+                        $"ImportFromSMB failed in native LibG code. " +
+                        $"This suggests the SMB file format may not be compatible with LibG, " +
+                        $"or there's an issue with the native LibG implementation. " +
+                        $"Check diagnostics for detailed error information.");
+                }
+                
+                if (result != null && result.Length > 0)
+                {
+                    geometries.AddRange(result);
+                    diagnostics.Add($"  ✓ Successfully loaded {geometries.Count} geometry object(s) from SMB file");
+                }
+                else if (result != null && result.Length == 0)
+                {
+                    diagnostics.Add($"  ⚠️ ImportFromSMB returned empty array - no geometries loaded");
+                }
+                else
+                {
+                    diagnostics.Add($"  ⚠️ ImportFromSMB returned null - no geometries loaded");
+                }
+                
                 return geometries;
             }
             catch (Exception ex)
@@ -980,8 +1380,13 @@ namespace DataExchangeNodes.DataExchange
                 diagnostics.Add($"✗ Error loading geometry from SMB: {ex.Message}");
                 diagnostics.Add($"  Type: {ex.GetType().Name}");
                 diagnostics.Add($"  Stack: {ex.StackTrace}");
+                if (ex.InnerException != null)
+                {
+                    diagnostics.Add($"  Inner: {ex.InnerException.Message}");
+                }
                 throw;
             }
         }
     }
 }
+
