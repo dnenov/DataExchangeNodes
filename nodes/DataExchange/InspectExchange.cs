@@ -18,6 +18,69 @@ namespace DataExchangeNodes.DataExchange
     public static class InspectExchange
     {
         /// <summary>
+        /// Inspects an Exchange and exports a comprehensive report to a text file
+        /// </summary>
+        [MultiReturn(new[] { "logFilePath", "report", "success" })]
+        public static Dictionary<string, object> InspectToFile(
+            Exchange exchange,
+            string outputFilePath = null)
+        {
+            var report = new List<string>();
+            var success = false;
+            string logFilePath = null;
+
+            try
+            {
+                if (exchange == null)
+                {
+                    return CreateFileErrorResult(report, "Exchange is null", null);
+                }
+
+                // Determine output file path
+                if (string.IsNullOrEmpty(outputFilePath))
+                {
+                    var tempDir = Path.Combine(Path.GetTempPath(), "DataExchangeNodes", "Inspection");
+                    if (!Directory.Exists(tempDir))
+                        Directory.CreateDirectory(tempDir);
+                    var fileName = $"ExchangeInspection_{exchange.ExchangeId}_{DateTime.Now:yyyyMMdd_HHmmss}.txt";
+                    logFilePath = Path.Combine(tempDir, fileName);
+                }
+                else
+                {
+                    logFilePath = Path.GetFullPath(outputFilePath);
+                    var outputDir = Path.GetDirectoryName(logFilePath);
+                    if (!string.IsNullOrEmpty(outputDir) && !Directory.Exists(outputDir))
+                        Directory.CreateDirectory(outputDir);
+                }
+
+                // Perform comprehensive inspection
+                PerformComprehensiveInspection(exchange, report);
+
+                // Write to file
+                File.WriteAllLines(logFilePath, report);
+                success = true;
+
+                report.Insert(0, $"=== Inspection exported to: {logFilePath} ===");
+            }
+            catch (Exception ex)
+            {
+                report.Add($"✗ ERROR: {ex.GetType().Name}: {ex.Message}");
+                report.Add($"Stack: {ex.StackTrace}");
+                if (ex.InnerException != null)
+                {
+                    report.Add($"Inner: {ex.InnerException.Message}");
+                }
+            }
+
+            return new Dictionary<string, object>
+            {
+                { "logFilePath", logFilePath ?? string.Empty },
+                { "report", string.Join("\n", report.Take(50)) }, // Preview only
+                { "success", success }
+            };
+        }
+
+        /// <summary>
         /// Inspects an Exchange and returns detailed information about its contents
         /// </summary>
         [MultiReturn(new[] { "report", "elementCount", "geometryAssetCount", "designAssetCount", "success" })]
@@ -108,6 +171,80 @@ namespace DataExchangeNodes.DataExchange
                 { "designAssetCount", 0 },
                 { "success", false }
             };
+        }
+
+        private static Dictionary<string, object> CreateFileErrorResult(List<string> report, string errorMessage, string logFilePath)
+        {
+            report.Add($"✗ ERROR: {errorMessage}");
+            return new Dictionary<string, object>
+            {
+                { "logFilePath", logFilePath ?? string.Empty },
+                { "report", string.Join("\n", report) },
+                { "success", false }
+            };
+        }
+
+        private static void PerformComprehensiveInspection(Exchange exchange, List<string> report)
+        {
+            report.Add("=".PadRight(80, '='));
+            report.Add("COMPREHENSIVE EXCHANGE INSPECTION REPORT");
+            report.Add("=".PadRight(80, '='));
+            report.Add($"Generated: {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+            report.Add("");
+            
+            report.Add("=== EXCHANGE INFORMATION ===");
+            report.Add($"Exchange Title: {exchange?.ExchangeTitle ?? "N/A"}");
+            report.Add($"Exchange ID: {exchange?.ExchangeId ?? "N/A"}");
+            report.Add($"Collection ID: {exchange?.CollectionId ?? "N/A"}");
+            report.Add($"Hub ID: {exchange?.HubId ?? "N/A"}");
+            report.Add("");
+
+            // Get Client instance
+            var client = TryGetClientInstance(report);
+            if (client == null)
+            {
+                report.Add("✗ ERROR: Could not get Client instance");
+                return;
+            }
+
+            var clientType = client.GetType();
+            var identifier = CreateDataExchangeIdentifier(exchange);
+            var (model, exchangeData, exchangeDataType) = GetElementDataModelAndExchangeData(client, clientType, identifier, report);
+            
+            if (model == null || exchangeData == null)
+            {
+                report.Add("✗ ERROR: Could not load ElementDataModel or ExchangeData");
+                return;
+            }
+
+            report.Add("✓ Successfully loaded ElementDataModel and ExchangeData");
+            report.Add("");
+
+            // Inspect ExchangeData metadata
+            InspectExchangeDataMetadata(exchangeData, exchangeDataType, report);
+
+            // Inspect RootAsset
+            InspectRootAsset(exchangeData, exchangeDataType, report);
+
+            // Inspect all asset types
+            InspectAllAssetTypes(exchangeData, exchangeDataType, report);
+
+            // Inspect Elements
+            InspectElementsDetailed(model, report);
+
+            // Inspect Relationships
+            InspectAllRelationships(exchangeData, exchangeDataType, report);
+
+            // Inspect Geometry Mappings
+            InspectGeometryMappings(exchangeData, exchangeDataType, report);
+
+            // Inspect Metadata and Properties
+            InspectMetadataAndProperties(exchangeData, exchangeDataType, report);
+
+            report.Add("");
+            report.Add("=".PadRight(80, '='));
+            report.Add("END OF INSPECTION REPORT");
+            report.Add("=".PadRight(80, '='));
         }
 
         private static object TryGetClientInstance(List<string> report)
@@ -681,6 +818,583 @@ namespace DataExchangeNodes.DataExchange
                     }
                 }
             }
+        }
+
+        private static void InspectExchangeDataMetadata(object exchangeData, Type exchangeDataType, List<string> report)
+        {
+            report.Add("=== EXCHANGE DATA METADATA ===");
+            
+            var exchangeIdProp = exchangeDataType.GetProperty("ExchangeID", BindingFlags.Public | BindingFlags.Instance);
+            if (exchangeIdProp != null)
+            {
+                report.Add($"ExchangeID: {exchangeIdProp.GetValue(exchangeData)}");
+            }
+
+            var descriptionProp = exchangeDataType.GetProperty("Description", BindingFlags.Public | BindingFlags.Instance);
+            if (descriptionProp != null)
+            {
+                report.Add($"Description: {descriptionProp.GetValue(exchangeData) ?? "N/A"}");
+            }
+
+            var exchangeIdentifierProp = exchangeDataType.GetProperty("ExchangeIdentifier", BindingFlags.Public | BindingFlags.Instance | BindingFlags.NonPublic);
+            if (exchangeIdentifierProp != null)
+            {
+                var identifier = exchangeIdentifierProp.GetValue(exchangeData);
+                if (identifier != null)
+                {
+                    var idType = identifier.GetType();
+                    var exchangeIdProp2 = idType.GetProperty("ExchangeId");
+                    var collectionIdProp = idType.GetProperty("CollectionId");
+                    var hubIdProp = idType.GetProperty("HubId");
+                    report.Add($"ExchangeIdentifier - ExchangeId: {exchangeIdProp2?.GetValue(identifier)}, CollectionId: {collectionIdProp?.GetValue(identifier)}, HubId: {hubIdProp?.GetValue(identifier)}");
+                }
+            }
+
+            report.Add("");
+        }
+
+        private static void InspectRootAsset(object exchangeData, Type exchangeDataType, List<string> report)
+        {
+            report.Add("=== ROOT ASSET ===");
+            
+            var rootAssetProp = exchangeDataType.GetProperty("RootAsset", BindingFlags.Public | BindingFlags.Instance);
+            if (rootAssetProp != null)
+            {
+                var rootAsset = rootAssetProp.GetValue(exchangeData);
+                if (rootAsset != null)
+                {
+                    InspectAssetDetails(rootAsset, "RootAsset", report, 0);
+                }
+                else
+                {
+                    report.Add("RootAsset: NULL");
+                }
+            }
+            else
+            {
+                report.Add("RootAsset property not found");
+            }
+            
+            report.Add("");
+        }
+
+        private static void InspectAllAssetTypes(object exchangeData, Type exchangeDataType, List<string> report)
+        {
+            report.Add("=== ALL ASSET TYPES ===");
+            
+            var assetTypes = new[]
+            {
+                "Autodesk.DataExchange.SchemaObjects.Assets.GeometryAsset",
+                "Autodesk.DataExchange.SchemaObjects.Assets.DesignAsset",
+                "Autodesk.DataExchange.SchemaObjects.Assets.InstanceAsset",
+                "Autodesk.DataExchange.SchemaObjects.Assets.GroupAsset",
+                "Autodesk.DataExchange.SchemaObjects.Assets.RenderStyleAsset",
+                "Autodesk.DataExchange.SchemaObjects.Assets.BinaryAsset"
+            };
+
+            var getAssetsByTypeMethod = exchangeDataType.GetMethod("GetAssetsByType", BindingFlags.Public | BindingFlags.Instance);
+            if (getAssetsByTypeMethod == null)
+            {
+                report.Add("✗ GetAssetsByType method not found");
+                return;
+            }
+
+            foreach (var assetTypeName in assetTypes)
+            {
+                var assetType = exchangeDataType.Assembly.GetType(assetTypeName);
+                if (assetType == null)
+                {
+                    // Try searching all assemblies
+                    foreach (var asm in AppDomain.CurrentDomain.GetAssemblies().Where(a => a.GetName().Name.Contains("DataExchange")))
+                    {
+                        assetType = asm.GetType(assetTypeName);
+                        if (assetType != null) break;
+                    }
+                }
+
+                if (assetType != null)
+                {
+                    var genericMethod = getAssetsByTypeMethod.MakeGenericMethod(assetType);
+                    var assets = genericMethod.Invoke(exchangeData, null) as System.Collections.IEnumerable;
+                    
+                    if (assets != null)
+                    {
+                        var assetsList = assets.Cast<object>().ToList();
+                        var typeName = assetType.Name;
+                        report.Add($"");
+                        report.Add($"--- {typeName} ({assetsList.Count}) ---");
+                        
+                        foreach (var asset in assetsList)
+                        {
+                            InspectAssetDetails(asset, typeName, report, 1);
+                        }
+                    }
+                }
+            }
+            
+            report.Add("");
+        }
+
+        private static void InspectAssetDetails(object asset, string assetTypeName, List<string> report, int indentLevel)
+        {
+            var indent = new string(' ', indentLevel * 2);
+            
+            var idProp = asset.GetType().GetProperty("Id", BindingFlags.Public | BindingFlags.Instance);
+            var id = idProp?.GetValue(asset)?.ToString() ?? "N/A";
+            report.Add($"{indent}Asset: {assetTypeName} (ID: {id})");
+
+            // Get all properties
+            var properties = asset.GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance);
+            foreach (var prop in properties)
+            {
+                try
+                {
+                    var value = prop.GetValue(asset);
+                    var propName = prop.Name;
+                    
+                    // Skip complex properties that we'll inspect separately
+                    if (propName == "ChildNodes" || propName == "Parent" || propName == "Geometry" || 
+                        propName == "BinaryReference" || propName == "ObjectInfo")
+                        continue;
+
+                    if (value != null)
+                    {
+                        var valueStr = value.ToString();
+                        if (valueStr.Length > 100)
+                            valueStr = valueStr.Substring(0, 100) + "...";
+                        report.Add($"{indent}  {propName}: {valueStr}");
+                    }
+                }
+                catch { }
+            }
+
+            // Inspect ObjectInfo
+            var objectInfoProp = asset.GetType().GetProperty("ObjectInfo", BindingFlags.Public | BindingFlags.Instance);
+            if (objectInfoProp != null)
+            {
+                var objectInfo = objectInfoProp.GetValue(asset);
+                if (objectInfo != null)
+                {
+                    var nameProp = objectInfo.GetType().GetProperty("Name", BindingFlags.Public | BindingFlags.Instance);
+                    if (nameProp != null)
+                    {
+                        var name = nameProp.GetValue(objectInfo)?.ToString();
+                        if (!string.IsNullOrEmpty(name))
+                        {
+                            report.Add($"{indent}  ObjectInfo.Name: {name}");
+                        }
+                    }
+                }
+            }
+
+            // Inspect BinaryReference for GeometryAssets
+            if (assetTypeName.Contains("GeometryAsset"))
+            {
+                var binaryRefProp = asset.GetType().GetProperty("BinaryReference", BindingFlags.Public | BindingFlags.Instance);
+                if (binaryRefProp != null)
+                {
+                    var binaryRef = binaryRefProp.GetValue(asset);
+                    if (binaryRef != null)
+                    {
+                        InspectBinaryReferenceDetailed(binaryRef, report, indentLevel + 1);
+                    }
+                    else
+                    {
+                        report.Add($"{indent}  BinaryReference: NULL");
+                    }
+                }
+            }
+
+            // Inspect Geometry for GeometryAssets
+            if (assetTypeName.Contains("GeometryAsset"))
+            {
+                var geometryProp = asset.GetType().GetProperty("Geometry", BindingFlags.Public | BindingFlags.Instance);
+                if (geometryProp != null)
+                {
+                    var geometry = geometryProp.GetValue(asset);
+                    if (geometry != null)
+                    {
+                        InspectGeometryDetailed(geometry, report, indentLevel + 1);
+                    }
+                    else
+                    {
+                        report.Add($"{indent}  Geometry: NULL");
+                    }
+                }
+            }
+
+            // Inspect ChildNodes
+            var childNodesProp = asset.GetType().GetProperty("ChildNodes", BindingFlags.Public | BindingFlags.Instance);
+            if (childNodesProp != null)
+            {
+                var childNodes = childNodesProp.GetValue(asset) as System.Collections.IEnumerable;
+                if (childNodes != null)
+                {
+                    var childNodesList = childNodes.Cast<object>().ToList();
+                    if (childNodesList.Count > 0)
+                    {
+                        report.Add($"{indent}  ChildNodes: {childNodesList.Count}");
+                        foreach (var childNodeRel in childNodesList)
+                        {
+                            InspectRelationship(childNodeRel, report, indentLevel + 2);
+                        }
+                    }
+                }
+            }
+
+            // Inspect Parent
+            var parentProp = asset.GetType().GetProperty("Parent", BindingFlags.Public | BindingFlags.Instance);
+            if (parentProp != null)
+            {
+                var parent = parentProp.GetValue(asset);
+                if (parent != null)
+                {
+                    var parentIdProp = parent.GetType().GetProperty("Id", BindingFlags.Public | BindingFlags.Instance);
+                    var parentId = parentIdProp?.GetValue(parent)?.ToString() ?? "N/A";
+                    var parentType = parent.GetType().Name;
+                    report.Add($"{indent}  Parent: {parentType} (ID: {parentId})");
+                }
+            }
+
+            // Inspect Status
+            var statusProp = asset.GetType().GetProperty("Status", BindingFlags.Public | BindingFlags.Instance);
+            if (statusProp != null)
+            {
+                var status = statusProp.GetValue(asset);
+                if (status != null)
+                {
+                    var statusStr = status.GetType().IsEnum ? Enum.GetName(status.GetType(), status) : status.ToString();
+                    report.Add($"{indent}  Status: {statusStr}");
+                }
+            }
+
+            report.Add("");
+        }
+
+        private static void InspectBinaryReferenceDetailed(object binaryRef, List<string> report, int indentLevel)
+        {
+            var indent = new string(' ', indentLevel * 2);
+            report.Add($"{indent}BinaryReference:");
+            
+            var properties = binaryRef.GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance);
+            foreach (var prop in properties)
+            {
+                try
+                {
+                    var value = prop.GetValue(binaryRef);
+                    report.Add($"{indent}  {prop.Name}: {value ?? "NULL"}");
+                }
+                catch { }
+            }
+        }
+
+        private static void InspectGeometryDetailed(object geometry, List<string> report, int indentLevel)
+        {
+            var indent = new string(' ', indentLevel * 2);
+            report.Add($"{indent}Geometry:");
+            
+            var geometryComponentType = geometry.GetType();
+            var geometryWrapperProp = geometryComponentType.GetProperty("Geometry", BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public);
+            if (geometryWrapperProp == null)
+            {
+                geometryWrapperProp = geometryComponentType.GetProperty("Geometry", BindingFlags.Public | BindingFlags.Instance);
+            }
+
+            if (geometryWrapperProp != null)
+            {
+                var geometryWrapper = geometryWrapperProp.GetValue(geometry);
+                if (geometryWrapper != null)
+                {
+                    var wrapperType = geometryWrapper.GetType();
+                    var typeProp = wrapperType.GetProperty("Type", BindingFlags.Public | BindingFlags.Instance);
+                    var formatProp = wrapperType.GetProperty("Format", BindingFlags.Public | BindingFlags.Instance);
+                    
+                    if (typeProp != null)
+                    {
+                        var typeValue = typeProp.GetValue(geometryWrapper);
+                        var typeStr = typeValue?.GetType().IsEnum == true ? Enum.GetName(typeValue.GetType(), typeValue) : typeValue?.ToString();
+                        report.Add($"{indent}  Type: {typeStr}");
+                    }
+                    
+                    if (formatProp != null)
+                    {
+                        var formatValue = formatProp.GetValue(geometryWrapper);
+                        var formatStr = formatValue?.GetType().IsEnum == true ? Enum.GetName(formatValue.GetType(), formatValue) : formatValue?.ToString();
+                        report.Add($"{indent}  Format: {formatStr}");
+                    }
+                }
+            }
+        }
+
+        private static void InspectRelationship(object relationshipNode, List<string> report, int indentLevel)
+        {
+            var indent = new string(' ', indentLevel * 2);
+            
+            var nodeProp = relationshipNode.GetType().GetProperty("Node", BindingFlags.Public | BindingFlags.Instance);
+            var relationshipProp = relationshipNode.GetType().GetProperty("Relationship", BindingFlags.Public | BindingFlags.Instance);
+            
+            if (nodeProp != null)
+            {
+                var node = nodeProp.GetValue(relationshipNode);
+                if (node != null)
+                {
+                    var nodeIdProp = node.GetType().GetProperty("Id", BindingFlags.Public | BindingFlags.Instance);
+                    var nodeId = nodeIdProp?.GetValue(node)?.ToString() ?? "N/A";
+                    var nodeType = node.GetType().Name;
+                    
+                    string relationshipType = "Unknown";
+                    if (relationshipProp != null)
+                    {
+                        var relationship = relationshipProp.GetValue(relationshipNode);
+                        if (relationship != null)
+                        {
+                            relationshipType = relationship.GetType().Name;
+                            
+                            // Inspect relationship properties
+                            var relProperties = relationship.GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance);
+                            foreach (var relProp in relProperties)
+                            {
+                                try
+                                {
+                                    var relValue = relProp.GetValue(relationship);
+                                    if (relValue != null)
+                                    {
+                                        report.Add($"{indent}  Relationship.{relProp.Name}: {relValue}");
+                                    }
+                                }
+                                catch { }
+                            }
+                        }
+                    }
+                    
+                    report.Add($"{indent}-> {relationshipType}: {nodeType} (ID: {nodeId})");
+                    
+                    // Recursively inspect child nodes
+                    var nodeChildNodesProp = node.GetType().GetProperty("ChildNodes", BindingFlags.Public | BindingFlags.Instance);
+                    if (nodeChildNodesProp != null)
+                    {
+                        var nodeChildNodes = nodeChildNodesProp.GetValue(node) as System.Collections.IEnumerable;
+                        if (nodeChildNodes != null)
+                        {
+                            var nodeChildNodesList = nodeChildNodes.Cast<object>().ToList();
+                            if (nodeChildNodesList.Count > 0)
+                            {
+                                report.Add($"{indent}  Children: {nodeChildNodesList.Count}");
+                                foreach (var childRel in nodeChildNodesList)
+                                {
+                                    InspectRelationship(childRel, report, indentLevel + 1);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        private static void InspectElementsDetailed(ElementDataModel model, List<string> report)
+        {
+            report.Add("=== ELEMENTS (DETAILED) ===");
+            
+            var elementsProperty = typeof(ElementDataModel).GetProperty("Elements", BindingFlags.Public | BindingFlags.Instance);
+            if (elementsProperty == null)
+            {
+                report.Add("Elements property not found");
+                return;
+            }
+
+            var elements = elementsProperty.GetValue(model) as System.Collections.IEnumerable;
+            if (elements == null)
+            {
+                report.Add("No elements found");
+                report.Add("");
+                return;
+            }
+
+            var elementsList = elements.Cast<object>().ToList();
+            report.Add($"Total Elements: {elementsList.Count}");
+            report.Add("");
+
+            var idx = 0;
+            foreach (var element in elementsList)
+            {
+                idx++;
+                var indent = "  ";
+                report.Add($"{indent}Element #{idx}:");
+                
+                var properties = element.GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance);
+                foreach (var prop in properties)
+                {
+                    try
+                    {
+                        var value = prop.GetValue(element);
+                        if (value != null)
+                        {
+                            var valueStr = value.ToString();
+                            if (valueStr.Length > 200)
+                                valueStr = valueStr.Substring(0, 200) + "...";
+                            report.Add($"{indent}  {prop.Name}: {valueStr}");
+                        }
+                    }
+                    catch { }
+                }
+                
+                report.Add("");
+            }
+        }
+
+        private static void InspectAllRelationships(object exchangeData, Type exchangeDataType, List<string> report)
+        {
+            report.Add("=== ALL RELATIONSHIPS ===");
+            
+            // Get all assets and inspect their relationships
+            var getAssetsByTypeMethod = exchangeDataType.GetMethod("GetAssetsByType", BindingFlags.Public | BindingFlags.Instance);
+            if (getAssetsByTypeMethod == null)
+            {
+                report.Add("GetAssetsByType method not found");
+                return;
+            }
+
+            var baseAssetType = exchangeDataType.Assembly.GetType("Autodesk.DataExchange.SchemaObjects.Assets.Asset");
+            if (baseAssetType == null)
+            {
+                foreach (var asm in AppDomain.CurrentDomain.GetAssemblies().Where(a => a.GetName().Name.Contains("DataExchange")))
+                {
+                    baseAssetType = asm.GetType("Autodesk.DataExchange.SchemaObjects.Assets.Asset");
+                    if (baseAssetType != null) break;
+                }
+            }
+
+            if (baseAssetType != null)
+            {
+                var genericMethod = getAssetsByTypeMethod.MakeGenericMethod(baseAssetType);
+                var allAssets = genericMethod.Invoke(exchangeData, null) as System.Collections.IEnumerable;
+                
+                if (allAssets != null)
+                {
+                    var assetsList = allAssets.Cast<object>().ToList();
+                    report.Add($"Total Assets: {assetsList.Count}");
+                    
+                    var relationshipCount = 0;
+                    foreach (var asset in assetsList)
+                    {
+                        var childNodesProp = asset.GetType().GetProperty("ChildNodes", BindingFlags.Public | BindingFlags.Instance);
+                        if (childNodesProp != null)
+                        {
+                            var childNodes = childNodesProp.GetValue(asset) as System.Collections.IEnumerable;
+                            if (childNodes != null)
+                            {
+                                var childNodesList = childNodes.Cast<object>().ToList();
+                                relationshipCount += childNodesList.Count;
+                            }
+                        }
+                    }
+                    
+                    report.Add($"Total Relationships: {relationshipCount}");
+                }
+            }
+            
+            report.Add("");
+        }
+
+        private static void InspectGeometryMappings(object exchangeData, Type exchangeDataType, List<string> report)
+        {
+            report.Add("=== GEOMETRY MAPPINGS ===");
+            
+            var unsavedGeometryMappingProp = exchangeDataType.GetProperty("UnsavedGeometryMapping", BindingFlags.Public | BindingFlags.Instance | BindingFlags.NonPublic);
+            if (unsavedGeometryMappingProp != null)
+            {
+                var mapping = unsavedGeometryMappingProp.GetValue(exchangeData);
+                if (mapping != null)
+                {
+                    var mappingDict = mapping as System.Collections.IDictionary;
+                    if (mappingDict != null)
+                    {
+                        report.Add($"UnsavedGeometryMapping: {mappingDict.Count} entries");
+                        var idx = 0;
+                        foreach (System.Collections.DictionaryEntry entry in mappingDict)
+                        {
+                            idx++;
+                            report.Add($"  [{idx}] Asset ID: {entry.Key}, Path: {entry.Value}");
+                        }
+                    }
+                }
+                else
+                {
+                    report.Add("UnsavedGeometryMapping: NULL or empty");
+                }
+            }
+
+            var unsavedMeshGeometryMappingProp = exchangeDataType.GetProperty("UnsavedMeshGeometryMapping", BindingFlags.Public | BindingFlags.Instance | BindingFlags.NonPublic);
+            if (unsavedMeshGeometryMappingProp != null)
+            {
+                var mapping = unsavedMeshGeometryMappingProp.GetValue(exchangeData);
+                if (mapping != null)
+                {
+                    var mappingDict = mapping as System.Collections.IDictionary;
+                    if (mappingDict != null)
+                    {
+                        report.Add($"UnsavedMeshGeometryMapping: {mappingDict.Count} entries");
+                    }
+                }
+            }
+
+            var unsavedCustomGeometryMappingProp = exchangeDataType.GetProperty("UnsavedCustomGeometryMapping", BindingFlags.Public | BindingFlags.Instance | BindingFlags.NonPublic);
+            if (unsavedCustomGeometryMappingProp != null)
+            {
+                var mapping = unsavedCustomGeometryMappingProp.GetValue(exchangeData);
+                if (mapping != null)
+                {
+                    var mappingDict = mapping as System.Collections.IDictionary;
+                    if (mappingDict != null)
+                    {
+                        report.Add($"UnsavedCustomGeometryMapping: {mappingDict.Count} entries");
+                    }
+                }
+            }
+            
+            report.Add("");
+        }
+
+        private static void InspectMetadataAndProperties(object exchangeData, Type exchangeDataType, List<string> report)
+        {
+            report.Add("=== METADATA AND PROPERTIES ===");
+            
+            // Get all properties of ExchangeData
+            var properties = exchangeDataType.GetProperties(BindingFlags.Public | BindingFlags.Instance | BindingFlags.NonPublic);
+            report.Add($"ExchangeData Properties: {properties.Length}");
+            
+            foreach (var prop in properties)
+            {
+                try
+                {
+                    // Skip complex properties we've already inspected
+                    if (prop.Name == "RootAsset" || prop.Name == "UnsavedGeometryMapping" || 
+                        prop.Name == "UnsavedMeshGeometryMapping" || prop.Name == "UnsavedCustomGeometryMapping" ||
+                        prop.Name == "ExchangeIdentifier")
+                        continue;
+
+                    var value = prop.GetValue(exchangeData);
+                    if (value != null)
+                    {
+                        var valueType = value.GetType();
+                        if (valueType.IsPrimitive || valueType == typeof(string) || valueType.IsEnum)
+                        {
+                            report.Add($"  {prop.Name}: {value}");
+                        }
+                        else if (value is System.Collections.ICollection collection)
+                        {
+                            report.Add($"  {prop.Name}: Collection with {collection.Count} items");
+                        }
+                        else
+                        {
+                            report.Add($"  {prop.Name}: {valueType.Name} (complex type)");
+                        }
+                    }
+                }
+                catch { }
+            }
+            
+            report.Add("");
         }
     }
 }
