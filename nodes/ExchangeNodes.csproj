@@ -40,6 +40,12 @@
       <IncludeAssets>compile;build</IncludeAssets>
     </PackageReference>
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" ExcludeAssets="runtime" />
+    
+    <!-- DataExchange SDK - compile-time only for IntelliSense (runtime DLLs provided by Dynamo/DataExchange Client) -->
+    <PackageReference Include="Autodesk.DataExchange.UI" Version="6.2.12-beta">
+      <ExcludeAssets>runtime;native;contentfiles</ExcludeAssets>
+      <IncludeAssets>compile;build</IncludeAssets>
+    </PackageReference>
   </ItemGroup>
 
   <!-- System.Net.Http is included in .NET 10.0 framework, no explicit reference needed -->
