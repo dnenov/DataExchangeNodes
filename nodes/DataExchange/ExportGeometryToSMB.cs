@@ -1138,18 +1138,142 @@ namespace DataExchangeNodes.DataExchange
             }
 
             object designAsset = null;
-            foreach (var nodeRel in childNodes)
+            
+            // Strategy: Find the InstanceAsset "20292670-018d-485b-8f26-aae436816976" under TopLevelAssembly
+            // The visible geometry is linked to DesignAsset #1, which is under this InstanceAsset
+            // We need to find TopLevelAssembly, then find this InstanceAsset, then get its DesignAsset
+            var getAssetsByTypeMethod = exchangeDataType.GetMethod("GetAssetsByType", BindingFlags.Public | BindingFlags.Instance);
+            if (getAssetsByTypeMethod == null)
             {
-                var nodeProperty = nodeRel.GetType().GetProperty("Node", BindingFlags.Public | BindingFlags.Instance);
-                if (nodeProperty != null)
+                throw new InvalidOperationException("Could not find GetAssetsByType method on ExchangeData");
+            }
+            
+            var genericMethod = getAssetsByTypeMethod.MakeGenericMethod(designAssetType);
+            var allDesignAssetsInExchange = genericMethod.Invoke(exchangeData, null) as System.Collections.IEnumerable;
+            
+            if (allDesignAssetsInExchange == null)
+            {
+                throw new InvalidOperationException("GetAssetsByType returned null for DesignAsset");
+            }
+            
+            var allDesignAssetsList = allDesignAssetsInExchange.Cast<object>().ToList();
+            
+            // Find "TopLevelAssembly" - this is REQUIRED
+            object topLevelAssembly = null;
+            foreach (var da in allDesignAssetsList)
+            {
+                var objectInfoProp = da.GetType().GetProperty("ObjectInfo", BindingFlags.Public | BindingFlags.Instance);
+                if (objectInfoProp != null)
                 {
-                    var node = nodeProperty.GetValue(nodeRel);
+                    var objectInfo = objectInfoProp.GetValue(da);
+                    if (objectInfo != null)
+                    {
+                        var nameProp = objectInfo.GetType().GetProperty("Name", BindingFlags.Public | BindingFlags.Instance);
+                        if (nameProp != null)
+                        {
+                            var name = nameProp.GetValue(objectInfo)?.ToString();
+                            if (name != null && name.Equals("TopLevelAssembly", StringComparison.OrdinalIgnoreCase))
+                            {
+                                topLevelAssembly = da;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            
+            if (topLevelAssembly == null)
+            {
+                throw new InvalidOperationException("Could not find TopLevelAssembly DesignAsset. This is required for geometry to be visible in the viewer.");
+            }
+            
+            // Now find the InstanceAsset "20292670-018d-485b-8f26-aae436816976" under TopLevelAssembly
+            var topLevelChildNodesProp = topLevelAssembly.GetType().GetProperty("ChildNodes", BindingFlags.Public | BindingFlags.Instance);
+            if (topLevelChildNodesProp == null)
+            {
+                throw new InvalidOperationException("TopLevelAssembly does not have ChildNodes property");
+            }
+            
+            var topLevelChildNodes = topLevelChildNodesProp.GetValue(topLevelAssembly) as System.Collections.IEnumerable;
+            if (topLevelChildNodes == null)
+            {
+                throw new InvalidOperationException("TopLevelAssembly ChildNodes is null");
+            }
+            
+            object targetInstanceAsset = null;
+            foreach (var childNodeRel in topLevelChildNodes)
+            {
+                var nodeProp = childNodeRel.GetType().GetProperty("Node", BindingFlags.Public | BindingFlags.Instance);
+                if (nodeProp != null)
+                {
+                    var node = nodeProp.GetValue(childNodeRel);
+                    if (node != null)
+                    {
+                        var nodeType = node.GetType().Name;
+                        if (nodeType == "InstanceAsset")
+                        {
+                            var nodeObjectInfoProp = node.GetType().GetProperty("ObjectInfo", BindingFlags.Public | BindingFlags.Instance);
+                            if (nodeObjectInfoProp != null)
+                            {
+                                var nodeObjectInfo = nodeObjectInfoProp.GetValue(node);
+                                if (nodeObjectInfo != null)
+                                {
+                                    var nodeNameProp = nodeObjectInfo.GetType().GetProperty("Name", BindingFlags.Public | BindingFlags.Instance);
+                                    if (nodeNameProp != null)
+                                    {
+                                        var nodeName = nodeNameProp.GetValue(nodeObjectInfo)?.ToString();
+                                        if (nodeName != null && nodeName.Equals("20292670-018d-485b-8f26-aae436816976", StringComparison.OrdinalIgnoreCase))
+                                        {
+                                            targetInstanceAsset = node;
+                                            diagnostics.Add($"  ✓ Found InstanceAsset '20292670-018d-485b-8f26-aae436816976' under TopLevelAssembly");
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            if (targetInstanceAsset == null)
+            {
+                throw new InvalidOperationException("Could not find InstanceAsset '20292670-018d-485b-8f26-aae436816976' under TopLevelAssembly. This InstanceAsset contains the visible geometry structure.");
+            }
+            
+            // Get the DesignAsset from this InstanceAsset's children
+            var instanceChildNodesProp = targetInstanceAsset.GetType().GetProperty("ChildNodes", BindingFlags.Public | BindingFlags.Instance);
+            if (instanceChildNodesProp == null)
+            {
+                throw new InvalidOperationException("InstanceAsset does not have ChildNodes property");
+            }
+            
+            var instanceChildNodes = instanceChildNodesProp.GetValue(targetInstanceAsset) as System.Collections.IEnumerable;
+            if (instanceChildNodes == null)
+            {
+                throw new InvalidOperationException("InstanceAsset ChildNodes is null");
+            }
+            
+            foreach (var childNodeRel in instanceChildNodes)
+            {
+                var nodeProp = childNodeRel.GetType().GetProperty("Node", BindingFlags.Public | BindingFlags.Instance);
+                if (nodeProp != null)
+                {
+                    var node = nodeProp.GetValue(childNodeRel);
                     if (node != null && designAssetType.IsAssignableFrom(node.GetType()))
                     {
                         designAsset = node;
+                        var idProp = designAsset.GetType().GetProperty("Id", BindingFlags.Public | BindingFlags.Instance);
+                        var designAssetId = idProp?.GetValue(designAsset)?.ToString() ?? "N/A";
+                        diagnostics.Add($"  ✓ Found DesignAsset (ID: {designAssetId}) under InstanceAsset - this is the one with visible geometry");
                         break;
                     }
                 }
+            }
+            
+            if (designAsset == null)
+            {
+                throw new InvalidOperationException("Could not find DesignAsset under InstanceAsset '20292670-018d-485b-8f26-aae436816976'. This DesignAsset contains the visible geometry.");
             }
 
             if (designAsset == null)
@@ -1803,7 +1927,92 @@ namespace DataExchangeNodes.DataExchange
         }
 
         /// <summary>
-        /// Syncs schema to make assets visible and persistent
+        /// Syncs schema using internal SyncExchangeDataAsync with existing fulfillmentId
+        /// This avoids creating a new fulfillment and processes empty UnsavedGeometryMapping
+        /// </summary>
+        private static bool SyncSchemaWithFulfillmentIdAsync(object client, Type clientType, DataExchangeIdentifier identifier, object exchangeData, Type exchangeDataType, string fulfillmentId, object geometryAsset, Type geometryAssetType, List<string> diagnostics)
+        {
+            diagnostics.Add($"\nSyncing schema with existing fulfillmentId to make GeometryAsset visible and persistent...");
+            try
+            {
+                // Ensure GeometryAsset has CreatedLocal status
+                var statusProp = geometryAssetType.GetProperty("Status", BindingFlags.Public | BindingFlags.Instance);
+                if (statusProp != null)
+                {
+                    var statusType = Type.GetType("Autodesk.DataExchange.Core.Enums.Status, Autodesk.DataExchange.Core");
+                    if (statusType != null)
+                    {
+                        var createdLocalValue = Enum.Parse(statusType, "CreatedLocal");
+                        var currentStatus = statusProp.GetValue(geometryAsset);
+                        if (currentStatus == null || !currentStatus.Equals(createdLocalValue))
+                        {
+                            var setStatusMethod = geometryAssetType.GetMethod("SetStatus", BindingFlags.NonPublic | BindingFlags.Instance);
+                            if (setStatusMethod == null)
+                            {
+                                var baseType = geometryAssetType.BaseType;
+                                if (baseType != null)
+                                {
+                                    setStatusMethod = baseType.GetMethod("SetStatus", BindingFlags.NonPublic | BindingFlags.Instance);
+                                }
+                            }
+                            if (setStatusMethod != null)
+                            {
+                                setStatusMethod.Invoke(geometryAsset, new object[] { createdLocalValue });
+                                diagnostics.Add($"  ✓ Set GeometryAsset status to CreatedLocal");
+                            }
+                        }
+                    }
+                }
+                
+                // Call internal SyncExchangeDataAsync(DataExchangeIdentifier, ExchangeData, string fulfillmentId, CancellationToken)
+                // This syncs schema using our existing fulfillmentId without creating a new fulfillment
+                var syncMethod = ReflectionHelper.GetMethod(
+                    clientType, 
+                    "SyncExchangeDataAsync", 
+                    BindingFlags.NonPublic | BindingFlags.Instance,
+                    new[] { typeof(DataExchangeIdentifier), exchangeDataType, typeof(string), typeof(CancellationToken) });
+                
+                if (syncMethod == null)
+                {
+                    diagnostics.Add($"  ⚠️ Could not find internal SyncExchangeDataAsync(ExchangeData, fulfillmentId) method");
+                    return false;
+                }
+
+                diagnostics.Add($"  Calling internal SyncExchangeDataAsync with fulfillmentId {fulfillmentId}...");
+                var syncTask = ReflectionHelper.InvokeMethod(client, syncMethod, new object[] { identifier, exchangeData, fulfillmentId, CancellationToken.None }, diagnostics);
+                if (syncTask == null)
+                {
+                    diagnostics.Add($"  ⚠️ SyncExchangeDataAsync returned null");
+                    return false;
+                }
+
+                try
+                {
+                    ((dynamic)syncTask).GetAwaiter().GetResult();
+                    diagnostics.Add($"  ✓ Schema sync completed successfully");
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    diagnostics.Add($"  ⚠️ SyncExchangeDataAsync failed: {ex.Message}");
+                    diagnostics.Add($"  Stack: {ex.StackTrace}");
+                    if (ex.InnerException != null)
+                    {
+                        diagnostics.Add($"  Inner: {ex.InnerException.Message}");
+                    }
+                    return false;
+                }
+            }
+            catch (Exception ex)
+            {
+                diagnostics.Add($"  ⚠️ Error during schema sync: {ex.Message}");
+                diagnostics.Add($"  Stack: {ex.StackTrace}");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Syncs schema to make assets visible and persistent (DEPRECATED - creates new fulfillment)
         /// </summary>
         private static bool SyncSchemaAsync(object client, Type clientType, DataExchangeIdentifier identifier, ElementDataModel elementDataModel, object geometryAsset, Type geometryAssetType, List<string> diagnostics)
         {
@@ -2057,13 +2266,7 @@ namespace DataExchangeNodes.DataExchange
                         // Upload geometries
                         UploadGeometriesAsync(client, clientType, identifier, fulfillmentId, assetInfo, assetInfoType, exchangeData, exchangeDataType, geometryAsset, geometryAssetType, geometryAssetId, diagnostics);
                         
-                        // Finish fulfillment
-                        FinishFulfillmentAsync(client, clientType, identifier, fulfillmentId, diagnostics);
-                        
-                        // Refresh to get BinaryReference
-                        RefreshElementDataModelAsync(client, clientType, identifier, geometryAssetId, exchangeDataField, geometryAsset, geometryAssetType, diagnostics);
-                        
-                        // Check if BinaryReference was set
+                        // Check if BinaryReference was set (UploadGeometries should have set it)
                         var binaryRefProp = geometryAssetType.GetProperty("BinaryReference", BindingFlags.Public | BindingFlags.Instance);
                         if (binaryRefProp != null)
                         {
@@ -2071,16 +2274,29 @@ namespace DataExchangeNodes.DataExchange
                             if (binaryRef != null)
                             {
                                 diagnostics.Add($"  ✓ BinaryReference is now set");
-                                success = true;
                             }
                             else
                             {
                                 diagnostics.Add($"  ⚠️ BinaryReference still null - geometry uploaded but not linked");
-                                success = true;
                             }
+                        }
+                        
+                        // Sync schema BEFORE finishing fulfillment
+                        // Use internal SyncExchangeDataAsync with our existing fulfillmentId to sync schema
+                        // This will publish the schema (assets, relationships) to the cloud
+                        // IMPORTANT: Do this BEFORE finishing fulfillment to avoid creating a stuck version
+                        if (SyncSchemaWithFulfillmentIdAsync(client, clientType, identifier, exchangeData, exchangeDataType, fulfillmentId, geometryAsset, geometryAssetType, diagnostics))
+                        {
+                            diagnostics.Add($"  ✓ Schema synced successfully");
+                            
+                            // Now finish fulfillment - this will create ONE version with both geometry and schema
+                            FinishFulfillmentAsync(client, clientType, identifier, fulfillmentId, diagnostics);
+                            success = true;
                         }
                         else
                         {
+                            diagnostics.Add($"  ⚠️ Schema sync failed, but finishing fulfillment anyway");
+                            FinishFulfillmentAsync(client, clientType, identifier, fulfillmentId, diagnostics);
                             success = true;
                         }
                     }
@@ -2088,15 +2304,6 @@ namespace DataExchangeNodes.DataExchange
                     {
                         diagnostics.Add($"  ⚠️ Cannot upload - no fulfillmentId");
                     }
-                }
-                
-                // Poll for fulfillment completion
-                PollForFulfillmentAsync(client, clientType, identifier, fulfillmentId, diagnostics);
-                
-                // Sync schema
-                if (SyncSchemaAsync(client, clientType, identifier, elementDataModel, geometryAsset, geometryAssetType, diagnostics))
-                {
-                    success = true;
                 }
                 
                 // Inspect results
