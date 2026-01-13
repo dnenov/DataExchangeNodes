@@ -8,8 +8,9 @@ namespace DataExchangeNodes.DataExchange
 {
     /// <summary>
     /// Represents a DataExchange with metadata from Autodesk Construction Cloud
+    /// This is a data container class - use InspectExchange node to access its properties
     /// </summary>
-    [IsVisibleInDynamoLibrary(true)]
+    [IsVisibleInDynamoLibrary(false)]
     public class Exchange
     {
         #region Core Identifiers
@@ -17,11 +18,13 @@ namespace DataExchangeNodes.DataExchange
         /// <summary>
         /// Unique identifier for the exchange
         /// </summary>
+        [IsVisibleInDynamoLibrary(false)]
         public string ExchangeId { get; set; }
 
         /// <summary>
         /// Collection ID within the exchange
         /// </summary>
+        [IsVisibleInDynamoLibrary(false)]
         public string CollectionId { get; set; }
 
         #endregion
@@ -31,21 +34,25 @@ namespace DataExchangeNodes.DataExchange
         /// <summary>
         /// Title/name of the exchange
         /// </summary>
+        [IsVisibleInDynamoLibrary(false)]
         public string ExchangeTitle { get; set; }
 
         /// <summary>
         /// Description of the exchange
         /// </summary>
+        [IsVisibleInDynamoLibrary(false)]
         public string ExchangeDescription { get; set; }
 
         /// <summary>
         /// Name of the project containing this exchange
         /// </summary>
+        [IsVisibleInDynamoLibrary(false)]
         public string ProjectName { get; set; }
 
         /// <summary>
         /// Folder path within the project
         /// </summary>
+        [IsVisibleInDynamoLibrary(false)]
         public string FolderPath { get; set; }
 
         #endregion
@@ -55,11 +62,13 @@ namespace DataExchangeNodes.DataExchange
         /// <summary>
         /// User who created the exchange
         /// </summary>
+        [IsVisibleInDynamoLibrary(false)]
         public string CreatedBy { get; set; }
 
         /// <summary>
         /// User who last updated the exchange
         /// </summary>
+        [IsVisibleInDynamoLibrary(false)]
         public string UpdatedBy { get; set; }
 
         #endregion
@@ -69,31 +78,37 @@ namespace DataExchangeNodes.DataExchange
         /// <summary>
         /// Project URN (Autodesk Unified Resource Name)
         /// </summary>
+        [IsVisibleInDynamoLibrary(false)]
         public string ProjectUrn { get; set; }
 
         /// <summary>
         /// File URN
         /// </summary>
+        [IsVisibleInDynamoLibrary(false)]
         public string FileUrn { get; set; }
 
         /// <summary>
         /// Folder URN
         /// </summary>
+        [IsVisibleInDynamoLibrary(false)]
         public string FolderUrn { get; set; }
 
         /// <summary>
         /// File version ID
         /// </summary>
+        [IsVisibleInDynamoLibrary(false)]
         public string FileVersionId { get; set; }
 
         /// <summary>
         /// Hub ID (ACC hub identifier)
         /// </summary>
+        [IsVisibleInDynamoLibrary(false)]
         public string HubId { get; set; }
 
         /// <summary>
         /// Hub region (e.g., US, EMEA)
         /// </summary>
+        [IsVisibleInDynamoLibrary(false)]
         public string HubRegion { get; set; }
 
         #endregion
@@ -103,16 +118,19 @@ namespace DataExchangeNodes.DataExchange
         /// <summary>
         /// When the exchange was created
         /// </summary>
+        [IsVisibleInDynamoLibrary(false)]
         public string CreateTime { get; set; }
 
         /// <summary>
         /// When the exchange was last updated
         /// </summary>
+        [IsVisibleInDynamoLibrary(false)]
         public string Updated { get; set; }
 
         /// <summary>
         /// When this selection was made
         /// </summary>
+        [IsVisibleInDynamoLibrary(false)]
         public string Timestamp { get; set; }
 
         #endregion
@@ -122,21 +140,25 @@ namespace DataExchangeNodes.DataExchange
         /// <summary>
         /// Schema namespace identifier
         /// </summary>
+        [IsVisibleInDynamoLibrary(false)]
         public string SchemaNamespace { get; set; }
 
         /// <summary>
         /// Local path to exchange thumbnail image
         /// </summary>
+        [IsVisibleInDynamoLibrary(false)]
         public string ExchangeThumbnail { get; set; }
 
         /// <summary>
         /// Type of project (e.g., ACC, BIM360)
         /// </summary>
+        [IsVisibleInDynamoLibrary(false)]
         public string ProjectType { get; set; }
 
         /// <summary>
         /// Whether an update is available for this exchange
         /// </summary>
+        [IsVisibleInDynamoLibrary(false)]
         public bool IsUpdateAvailable { get; set; }
 
         #endregion

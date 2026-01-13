@@ -83,7 +83,7 @@ namespace DataExchangeNodes.DataExchange
         /// <summary>
         /// Inspects an Exchange and returns detailed information about its contents
         /// </summary>
-        [MultiReturn(new[] { "report", "elementCount", "geometryAssetCount", "designAssetCount", "success" })]
+        [MultiReturn(new[] { "report", "elementCount", "geometryAssetCount", "designAssetCount", "customParameters", "success" })]
         public static Dictionary<string, object> Inspect(
             Exchange exchange,
             bool includeDetails = true)
@@ -92,6 +92,7 @@ namespace DataExchangeNodes.DataExchange
             var elementCount = 0;
             var geometryAssetCount = 0;
             var designAssetCount = 0;
+            var customParameters = new Dictionary<string, object>();
             var success = false;
 
             try
@@ -103,14 +104,14 @@ namespace DataExchangeNodes.DataExchange
 
                 if (exchange == null)
                 {
-                    return CreateErrorResult(report, "Exchange is null");
+                    return CreateErrorResult(report, "Exchange is null", customParameters);
                 }
 
                 // Get Client instance
                 var client = TryGetClientInstance(report);
                 if (client == null)
                 {
-                    return CreateErrorResult(report, "Could not get Client instance. Make sure you have selected an Exchange first.");
+                    return CreateErrorResult(report, "Could not get Client instance. Make sure you have selected an Exchange first.", customParameters);
                 }
 
                 var clientType = client.GetType();
@@ -122,14 +123,15 @@ namespace DataExchangeNodes.DataExchange
                 var (model, exchangeData, exchangeDataType) = GetElementDataModelAndExchangeData(client, clientType, identifier, report);
                 if (model == null)
                 {
-                    return CreateErrorResult(report, "Could not load ElementDataModel");
+                    return CreateErrorResult(report, "Could not load ElementDataModel", customParameters);
                 }
 
                 report.Add("✓ Successfully loaded ElementDataModel");
                 report.Add("");
 
-                // Inspect Elements
+                // Inspect Elements and collect custom parameters
                 elementCount = InspectElements(model, report, includeDetails);
+                customParameters = CollectCustomParameters(model, report);
 
                 // Inspect GeometryAssets
                 geometryAssetCount = InspectGeometryAssets(exchangeData, exchangeDataType, report, includeDetails);
@@ -156,11 +158,12 @@ namespace DataExchangeNodes.DataExchange
                 { "elementCount", elementCount },
                 { "geometryAssetCount", geometryAssetCount },
                 { "designAssetCount", designAssetCount },
+                { "customParameters", customParameters },
                 { "success", success }
             };
         }
 
-        private static Dictionary<string, object> CreateErrorResult(List<string> report, string errorMessage)
+        private static Dictionary<string, object> CreateErrorResult(List<string> report, string errorMessage, Dictionary<string, object> customParameters = null)
         {
             report.Add($"✗ ERROR: {errorMessage}");
             return new Dictionary<string, object>
@@ -169,6 +172,7 @@ namespace DataExchangeNodes.DataExchange
                 { "elementCount", 0 },
                 { "geometryAssetCount", 0 },
                 { "designAssetCount", 0 },
+                { "customParameters", customParameters ?? new Dictionary<string, object>() },
                 { "success", false }
             };
         }
@@ -1395,6 +1399,155 @@ namespace DataExchangeNodes.DataExchange
             }
             
             report.Add("");
+        }
+
+        /// <summary>
+        /// Collects all custom parameters (properties) from all elements in the ElementDataModel
+        /// Returns a dictionary where keys are "ElementId.ParameterName" and values are the parameter values
+        /// </summary>
+        private static Dictionary<string, object> CollectCustomParameters(ElementDataModel model, List<string> report)
+        {
+            var customParameters = new Dictionary<string, object>();
+            
+            try
+            {
+                var elementsProperty = typeof(ElementDataModel).GetProperty("Elements", BindingFlags.Public | BindingFlags.Instance);
+                if (elementsProperty == null)
+                {
+                    return customParameters;
+                }
+
+                var elements = elementsProperty.GetValue(model) as System.Collections.IEnumerable;
+                if (elements == null)
+                {
+                    return customParameters;
+                }
+
+                var elementsList = elements.Cast<object>().ToList();
+                
+                foreach (var element in elementsList)
+                {
+                    try
+                    {
+                        // Get element ID
+                        var elementIdProp = element.GetType().GetProperty("Id", BindingFlags.Public | BindingFlags.Instance);
+                        var elementId = elementIdProp?.GetValue(element)?.ToString() ?? "Unknown";
+                        
+                        // Get element name
+                        var elementNameProp = element.GetType().GetProperty("Name", BindingFlags.Public | BindingFlags.Instance);
+                        var elementName = elementNameProp?.GetValue(element)?.ToString() ?? "Unknown";
+                        
+                        // Get all properties of the element
+                        var properties = element.GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance);
+                        
+                        foreach (var prop in properties)
+                        {
+                            try
+                            {
+                                // Skip standard properties that aren't custom parameters
+                                if (prop.Name == "Id" || prop.Name == "Name" || prop.Name == "Properties" || 
+                                    prop.Name == "Asset" || prop.Name == "Parent" || prop.Name == "ChildNodes")
+                                    continue;
+
+                                var value = prop.GetValue(element);
+                                
+                                // Only include properties with non-null values
+                                if (value != null)
+                                {
+                                    // Create a key like "ElementId.ParameterName" or "ElementName.ParameterName"
+                                    var key = $"{elementId}.{prop.Name}";
+                                    
+                                    // Convert value to a simple type if possible
+                                    object paramValue = value;
+                                    
+                                    // Handle complex types by converting to string
+                                    if (!(value is string) && !value.GetType().IsPrimitive && 
+                                        value.GetType() != typeof(decimal) && value.GetType() != typeof(DateTime) &&
+                                        !value.GetType().IsEnum)
+                                    {
+                                        // For complex types, convert to string representation
+                                        paramValue = value.ToString();
+                                    }
+                                    
+                                    customParameters[key] = paramValue;
+                                    
+                                    // Also add a version with element name for easier lookup
+                                    if (!string.IsNullOrEmpty(elementName) && elementName != "Unknown")
+                                    {
+                                        var nameKey = $"{elementName}.{prop.Name}";
+                                        if (!customParameters.ContainsKey(nameKey))
+                                        {
+                                            customParameters[nameKey] = paramValue;
+                                        }
+                                    }
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                // Skip properties that can't be read
+                                report?.Add($"  ⚠️ Could not read property {prop.Name}: {ex.Message}");
+                            }
+                        }
+                        
+                        // Also check if there's a Properties collection (ElementProperties)
+                        var propertiesCollectionProp = element.GetType().GetProperty("Properties", BindingFlags.Public | BindingFlags.Instance);
+                        if (propertiesCollectionProp != null)
+                        {
+                            var propertiesCollection = propertiesCollectionProp.GetValue(element);
+                            if (propertiesCollection != null)
+                            {
+                                // Try to enumerate the properties collection
+                                if (propertiesCollection is System.Collections.IEnumerable propsEnum)
+                                {
+                                    foreach (var propItem in propsEnum)
+                                    {
+                                        try
+                                        {
+                                            // Try to get Name and Value properties from the property item
+                                            var propNameProp = propItem.GetType().GetProperty("Name", BindingFlags.Public | BindingFlags.Instance);
+                                            var propValueProp = propItem.GetType().GetProperty("Value", BindingFlags.Public | BindingFlags.Instance);
+                                            
+                                            if (propNameProp != null && propValueProp != null)
+                                            {
+                                                var propName = propNameProp.GetValue(propItem)?.ToString();
+                                                var propValue = propValueProp.GetValue(propItem);
+                                                
+                                                if (!string.IsNullOrEmpty(propName) && propValue != null)
+                                                {
+                                                    var key = $"{elementId}.{propName}";
+                                                    customParameters[key] = propValue;
+                                                    
+                                                    if (!string.IsNullOrEmpty(elementName) && elementName != "Unknown")
+                                                    {
+                                                        var nameKey = $"{elementName}.{propName}";
+                                                        if (!customParameters.ContainsKey(nameKey))
+                                                        {
+                                                            customParameters[nameKey] = propValue;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        catch { }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        report?.Add($"  ⚠️ Could not process element: {ex.Message}");
+                    }
+                }
+                
+                report?.Add($"✓ Collected {customParameters.Count} custom parameter(s) from {elementsList.Count} element(s)");
+            }
+            catch (Exception ex)
+            {
+                report?.Add($"  ⚠️ Error collecting custom parameters: {ex.Message}");
+            }
+            
+            return customParameters;
         }
     }
 }

@@ -87,7 +87,6 @@ namespace DataExchangeNodes.DataExchange
                 }
             }
 
-                    property = type.GetProperty(fallbackPropertyName, flags);
 
             /// <summary>
             /// Finds a type across assemblies, with static caching for deterministic lookups
@@ -1101,16 +1100,98 @@ namespace DataExchangeNodes.DataExchange
                 }
             }
 
+            // If ElementDataModel is null, this is a new/empty exchange - create one from scratch
             if (elementDataModel == null)
             {
-                var valueInfo = valueProp != null 
-                    ? $"Value type: {valueProp.GetValue(response)?.GetType().FullName ?? "null"}" 
-                    : "No Value property";
-                throw new InvalidOperationException(
-                    $"Could not extract ElementDataModel from response of type {responseType.FullName}. {valueInfo}");
+                diagnostics.Add("  ⚠️ ElementDataModel is null - this is a new/empty exchange");
+                diagnostics.Add("  Creating new ElementDataModel from scratch...");
+                
+                // Try to find ElementDataModel.Create static method
+                var elementDataModelType = typeof(ElementDataModel);
+                var createMethod = elementDataModelType.GetMethod("Create", BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy);
+                
+                if (createMethod != null)
+                {
+                    var parameters = createMethod.GetParameters();
+                    diagnostics.Add($"  Found Create method with parameters: {string.Join(", ", parameters.Select(p => p.ParameterType.Name))}");
+                    
+                    // Try Create(IClient) - most common case
+                    // Check if parameter type (IClient interface) is assignable from clientType (i.e., client implements IClient)
+                    if (parameters.Length == 1 && parameters[0].ParameterType.IsAssignableFrom(clientType))
+                    {
+                        elementDataModel = (ElementDataModel)createMethod.Invoke(null, new object[] { client });
+                        diagnostics.Add($"  ✓ Created ElementDataModel using Create(IClient)");
+                    }
+                    // Try Create(DataExchangeIdentifier)
+                    else if (parameters.Length == 1 && parameters[0].ParameterType == typeof(DataExchangeIdentifier))
+                    {
+                        elementDataModel = (ElementDataModel)createMethod.Invoke(null, new object[] { identifier });
+                        diagnostics.Add($"  ✓ Created ElementDataModel using Create(DataExchangeIdentifier)");
+                    }
+                    // Try Create(IClient, DataExchangeIdentifier)
+                    else if (parameters.Length == 2 && 
+                             parameters[0].ParameterType.IsAssignableFrom(clientType) &&
+                             parameters[1].ParameterType == typeof(DataExchangeIdentifier))
+                    {
+                        elementDataModel = (ElementDataModel)createMethod.Invoke(null, new object[] { client, identifier });
+                        diagnostics.Add($"  ✓ Created ElementDataModel using Create(IClient, DataExchangeIdentifier)");
+                    }
+                    // Try parameterless Create()
+                    else if (parameters.Length == 0)
+                    {
+                        elementDataModel = (ElementDataModel)createMethod.Invoke(null, null);
+                        diagnostics.Add($"  ✓ Created ElementDataModel using Create()");
+                    }
+                    else
+                    {
+                        diagnostics.Add($"  ⚠️ Create method found but has unexpected signature: {string.Join(", ", parameters.Select(p => p.ParameterType.Name))}");
+                    }
+                }
+                
+                // If Create method didn't work, try constructor with DataExchangeIdentifier
+                if (elementDataModel == null)
+                {
+                    var constructor = elementDataModelType.GetConstructor(new[] { typeof(DataExchangeIdentifier) });
+                    if (constructor != null)
+                    {
+                        elementDataModel = (ElementDataModel)constructor.Invoke(new object[] { identifier });
+                        diagnostics.Add($"  ✓ Created ElementDataModel using constructor(DataExchangeIdentifier)");
+                    }
+                }
+                
+                // If still null, try parameterless constructor
+                if (elementDataModel == null)
+                {
+                    var parameterlessConstructor = elementDataModelType.GetConstructor(Type.EmptyTypes);
+                    if (parameterlessConstructor != null)
+                    {
+                        elementDataModel = (ElementDataModel)parameterlessConstructor.Invoke(null);
+                        diagnostics.Add($"  ✓ Created ElementDataModel using parameterless constructor");
+                        
+                        // Try to set the identifier if there's a property or method
+                        var identifierProperty = elementDataModelType.GetProperty("ExchangeIdentifier", BindingFlags.Public | BindingFlags.Instance);
+                        if (identifierProperty != null && identifierProperty.CanWrite)
+                        {
+                            identifierProperty.SetValue(elementDataModel, identifier);
+                            diagnostics.Add($"  ✓ Set ExchangeIdentifier on ElementDataModel");
+                        }
+                    }
+                }
+                
+                if (elementDataModel == null)
+                {
+                    var valueInfo = valueProp != null 
+                        ? $"Value type: {valueProp.GetValue(response)?.GetType().FullName ?? "null"}" 
+                        : "No Value property";
+                    throw new InvalidOperationException(
+                        $"Could not extract or create ElementDataModel. Response Value was null (new exchange), and could not find Create method or suitable constructor. {valueInfo}");
+                }
+            }
+            else
+            {
+                diagnostics.Add($"✓ Got existing ElementDataModel: {elementDataModel.GetType().FullName}");
             }
 
-            diagnostics.Add($"✓ Got ElementDataModel: {elementDataModel.GetType().FullName}");
             return elementDataModel;
         }
 
@@ -1949,7 +2030,7 @@ END-ISO-10303-21;
         /// <summary>
         /// Full SyncExchangeDataAsync flow adapted for direct SMB uploads
         /// Follows the exact same flow as the internal SDK method but skips STEP→SMB conversion
-        /// NOTE: Viewable generation is disabled by default (takes ~131 seconds). Use UploadSMBToExchange's generateViewable parameter to control it.
+        /// NOTE: Viewable generation is disabled by default (takes ~131 seconds) for performance.
         /// </summary>
         private static async Task SyncExchangeDataAsyncForSMB(object client, Type clientType, DataExchangeIdentifier identifier, object exchangeData, Type exchangeDataType, List<string> diagnostics)
         {
@@ -1964,6 +2045,8 @@ END-ISO-10303-21;
                 await TimeOperation("ProcessRenderStylesFromFileGeometryAsync", 
                     async () => await ProcessRenderStylesFromFileGeometryAsync(client, clientType, exchangeData, exchangeDataType, diagnostics), diagnostics);
                 
+                // Fulfillment is REQUIRED - UploadGeometries needs a valid fulfillmentId to create the binary assets API endpoint
+                // Without fulfillment, the API returns 404 "The requested resource does not exist"
                 fulfillmentId = await TimeOperation("StartFulfillmentAsync", 
                     async () => await StartFulfillmentAsync(client, clientType, identifier, exchangeData, exchangeDataType, diagnostics), diagnostics);
                 api = TimeOperation("GetAPI", 
@@ -1985,6 +2068,7 @@ END-ISO-10303-21;
                 await TimeOperation("UploadLargePrimitiveGeometriesAsync", 
                     async () => await UploadLargePrimitiveGeometriesAsync(client, clientType, identifier, fulfillmentId, exchangeData, exchangeDataType, diagnostics), diagnostics);
                 
+                // Fulfillment sync request - synchronizes exchange data with the server
                 var fulfillmentSyncRequest = await TimeOperation("GetFulfillmentSyncRequestAsync", 
                     async () => await GetFulfillmentSyncRequestAsync(client, clientType, identifier, exchangeData, exchangeDataType, diagnostics), diagnostics);
                 
@@ -1994,6 +2078,7 @@ END-ISO-10303-21;
                 await TimeOperation("WaitForAllTasksAsync", 
                     async () => await WaitForAllTasksAsync(fulfillmentTasks, diagnostics), diagnostics);
                 
+                // Finish and poll fulfillment - completes the transaction and ensures server processing is done
                 await TimeOperation("FinishFulfillmentAsync", 
                     async () => await FinishFulfillmentAsync(api, apiType, identifier, fulfillmentId, diagnostics), diagnostics);
                 
@@ -2007,12 +2092,11 @@ END-ISO-10303-21;
                     () => SetExchangeIdentifierIfNeeded(exchangeData, exchangeDataType, identifier, diagnostics), diagnostics);
 
                 // Viewable generation is disabled by default (takes ~131 seconds)
-                // It can be enabled via UploadSMBToExchange's generateViewable parameter if needed
+                // The server will generate viewables automatically
                 diagnostics.Add("\n14. Skipping viewable generation (disabled by default for performance)");
                 diagnostics.Add("  ⚠️ Viewable generation skipped - geometry may not appear in viewer immediately");
                 diagnostics.Add("  ⚠️ Viewable will be generated automatically by the server, or you can trigger it manually");
                 diagnostics.Add("  ⏱️  Saved ~131 seconds by skipping viewable generation");
-                diagnostics.Add("  💡 To enable viewable generation, set generateViewable=true in UploadSMBToExchange");
 
                 syncTimer.Stop();
                 diagnostics.Add($"\n✓ Full SyncExchangeDataAsync flow completed successfully");
@@ -2029,7 +2113,7 @@ END-ISO-10303-21;
                 }
                 diagnostics.Add($"  Stack: {ex.StackTrace}");
 
-                // Discard fulfillment on error
+                // Discard fulfillment on error (cleanup)
                 if (!string.IsNullOrEmpty(fulfillmentId))
                 {
                     try
@@ -2653,8 +2737,7 @@ END-ISO-10303-21;
         /// This is CRITICAL - without this, geometry won't appear in the viewer even if uploaded successfully
         /// 
         /// NOTE: This method is currently NOT USED (disabled by default for performance - takes ~131 seconds).
-        /// Kept for posterity/reference. Viewable generation can be enabled via UploadSMBToExchange's generateViewable parameter.
-        /// The server will generate viewables automatically, so manual generation is typically not needed.
+        /// Kept for posterity/reference. The server will generate viewables automatically, so manual generation is typically not needed.
         /// </summary>
         [System.Obsolete("Not used by default - takes ~131 seconds. Use UploadSMBToExchange's generateViewable parameter if needed.")]
         private static async Task GenerateViewableAsync(object client, Type clientType, DataExchangeIdentifier identifier, List<string> diagnostics)
@@ -3085,14 +3168,9 @@ END-ISO-10303-21;
                     TimeOperation("Await sync task completion", 
                         () => syncTask.GetAwaiter().GetResult(), diagnostics);
                     
-                    // Generate viewable if requested (takes ~131 seconds, disabled by default for performance)
-                    if (generateViewable)
-                    {
-                        diagnostics.Add("\nGenerating viewable (generateViewable=true)...");
-                        var viewableTask = TimeOperation("GenerateViewableAsync (explicit request)", 
-                            () => GenerateViewableAsync(client, clientType, identifier, diagnostics), diagnostics);
-                        viewableTask.GetAwaiter().GetResult();
-                    }
+                    // Viewable generation is disabled by default (takes ~131 seconds)
+                    // It can be enabled manually if needed, but is typically not required
+                    // The server will generate viewables automatically
                     
                     // Check if BinaryReference was set
                     var binaryRefProp = geometryAssetType.GetProperty("BinaryReference", BindingFlags.Public | BindingFlags.Instance);
@@ -3149,6 +3227,23 @@ END-ISO-10303-21;
                 { "elementId", finalElementId },
                 { "log", string.Join("\n", diagnostics) },
                 { "success", success }
+            };
+        }
+        
+        /// <summary>
+        /// Gets available unit options for geometry export/upload.
+        /// Use this node to populate a dropdown for unit selection.
+        /// Returns unit strings compatible with ExportToSMB and UploadSMBToExchange.
+        /// </summary>
+        /// <returns>List of unit strings: kUnitType_CentiMeter, kUnitType_Meter, kUnitType_Feet, kUnitType_Inch</returns>
+        public static List<string> GetDataExchangeUnits()
+        {
+            return new List<string>
+            {
+                "kUnitType_CentiMeter",
+                "kUnitType_Meter",
+                "kUnitType_Feet",
+                "kUnitType_Inch"
             };
         }
     }
