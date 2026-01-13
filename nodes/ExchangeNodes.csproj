@@ -53,12 +53,21 @@
   <!-- ProtoGeometry and DesignScript assemblies for IntelliSense (compile-time only, not copied to output) -->
   <!-- These references help IntelliSense resolve types, but Private=False ensures they're not copied to output -->
   <ItemGroup>
-    <Reference Include="ProtoGeometry">
+    <!-- Try to reference from libg folder first, then fallback to Downloads -->
+    <Reference Include="ProtoGeometry" Condition="Exists('..\libg\RootDir\ProtoGeometry.dll')">
+      <HintPath>..\libg\RootDir\ProtoGeometry.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="ProtoGeometry" Condition="!Exists('..\libg\RootDir\ProtoGeometry.dll') And Exists('C:\Users\nenovd\Downloads\Dynamo\RootDir\ProtoGeometry.dll')">
       <HintPath>C:\Users\nenovd\Downloads\Dynamo\RootDir\ProtoGeometry.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <!-- Try to reference DesignScriptBuiltin from Dynamo installation or NuGet cache -->
-    <Reference Include="DesignScriptBuiltin" Condition="Exists('C:\Users\nenovd\Downloads\Dynamo\RootDir\DesignScriptBuiltin.dll')">
+    <Reference Include="DesignScriptBuiltin" Condition="Exists('..\libg\RootDir\DesignScriptBuiltin.dll')">
+      <HintPath>..\libg\RootDir\DesignScriptBuiltin.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="DesignScriptBuiltin" Condition="!Exists('..\libg\RootDir\DesignScriptBuiltin.dll') And Exists('C:\Users\nenovd\Downloads\Dynamo\RootDir\DesignScriptBuiltin.dll')">
       <HintPath>C:\Users\nenovd\Downloads\Dynamo\RootDir\DesignScriptBuiltin.dll</HintPath>
       <Private>False</Private>
     </Reference>
@@ -75,27 +84,45 @@
     </Reference>
   </ItemGroup>
 
-  <!-- Copy LibG DLLs for runtime (ASM231 version) -->
+  <!-- Copy RootDir and libg_231_0_0 folders to output -->
+  <!-- These folders should be placed in the project root (same level as nodes/ folder) -->
+  <!-- Structure: DataExchangeNodes/libg/RootDir/ and DataExchangeNodes/libg/libg_231_0_0/ -->
   <ItemGroup>
-    <None Include="C:\Users\nenovd\Downloads\Dynamo\RootDir\LibG.Interface.dll">
+    <!-- Copy entire RootDir folder if it exists -->
+    <None Include="..\libg\RootDir\**\*" Condition="Exists('..\libg\RootDir')">
+      <Link>RootDir\%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <!-- Copy entire libg_231_0_0 folder if it exists -->
+    <None Include="..\libg\libg_231_0_0\**\*" Condition="Exists('..\libg\libg_231_0_0')">
+      <Link>libg_231_0_0\%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+  
+  <!-- Fallback: Copy individual LibG DLLs if folders don't exist (for development) -->
+  <ItemGroup Condition="!Exists('..\libg\RootDir')">
+    <None Include="C:\Users\nenovd\Downloads\Dynamo\RootDir\LibG.Interface.dll" Condition="Exists('C:\Users\nenovd\Downloads\Dynamo\RootDir\LibG.Interface.dll')">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
-    <None Include="C:\Users\nenovd\Downloads\Dynamo\Libg_231_0_0\LibG.AsmPreloader.Managed.dll">
+  </ItemGroup>
+  <ItemGroup Condition="!Exists('..\libg\libg_231_0_0')">
+    <None Include="C:\Users\nenovd\Downloads\Dynamo\Libg_231_0_0\LibG.AsmPreloader.Managed.dll" Condition="Exists('C:\Users\nenovd\Downloads\Dynamo\Libg_231_0_0\LibG.AsmPreloader.Managed.dll')">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
-    <None Include="C:\Users\nenovd\Downloads\Dynamo\Libg_231_0_0\LibG.AsmPreloader.Unmanaged.dll">
+    <None Include="C:\Users\nenovd\Downloads\Dynamo\Libg_231_0_0\LibG.AsmPreloader.Unmanaged.dll" Condition="Exists('C:\Users\nenovd\Downloads\Dynamo\Libg_231_0_0\LibG.AsmPreloader.Unmanaged.dll')">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
-    <None Include="C:\Users\nenovd\Downloads\Dynamo\Libg_231_0_0\LibG.dll">
+    <None Include="C:\Users\nenovd\Downloads\Dynamo\Libg_231_0_0\LibG.dll" Condition="Exists('C:\Users\nenovd\Downloads\Dynamo\Libg_231_0_0\LibG.dll')">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
-    <None Include="C:\Users\nenovd\Downloads\Dynamo\Libg_231_0_0\LibG.Managed.dll">
+    <None Include="C:\Users\nenovd\Downloads\Dynamo\Libg_231_0_0\LibG.Managed.dll" Condition="Exists('C:\Users\nenovd\Downloads\Dynamo\Libg_231_0_0\LibG.Managed.dll')">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
-    <None Include="C:\Users\nenovd\Downloads\Dynamo\Libg_231_0_0\LibG.ProtoInterface.dll">
+    <None Include="C:\Users\nenovd\Downloads\Dynamo\Libg_231_0_0\LibG.ProtoInterface.dll" Condition="Exists('C:\Users\nenovd\Downloads\Dynamo\Libg_231_0_0\LibG.ProtoInterface.dll')">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
-    <None Include="C:\Users\nenovd\Downloads\Dynamo\Libg_231_0_0\LibGCore.dll">
+    <None Include="C:\Users\nenovd\Downloads\Dynamo\Libg_231_0_0\LibGCore.dll" Condition="Exists('C:\Users\nenovd\Downloads\Dynamo\Libg_231_0_0\LibGCore.dll')">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
   </ItemGroup>
@@ -103,6 +130,7 @@
   <!-- Output path to match ForgeParameterNodes pattern -->
   <PropertyGroup>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <AppendRuntimeIdentifierToOutputPath>false</AppendRuntimeIdentifierToOutputPath>
     <OutputPath>..\bin\$(Configuration)\$(DynamoVersion)\DataExchangeNodes</OutputPath>
   </PropertyGroup>
 

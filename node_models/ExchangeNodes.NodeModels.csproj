@@ -39,6 +39,7 @@
   <!-- Output path to match ForgeParameterNodes pattern -->
   <PropertyGroup>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <AppendRuntimeIdentifierToOutputPath>false</AppendRuntimeIdentifierToOutputPath>
     <OutputPath>..\bin\$(Configuration)\$(DynamoVersion)\DataExchangeNodes</OutputPath>
   </PropertyGroup>
 </Project>

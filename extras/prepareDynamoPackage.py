@@ -74,7 +74,14 @@ def main():
   print(f"Package version set to: {packageVersion}")
 
   # Copy all binaries and subdirectories from source to target bin folder
+  # Exclude RootDir and libg_231_0_0 from bin/ (they go to package root instead)
+  # Exclude win-x64 folder (it's a duplicate build artifact)
+  excludedFromBin = ["RootDir", "libg_231_0_0", "win-x64"]
+  
   for item in os.listdir(sourceBinariesFolder):
+    if item in excludedFromBin:
+      continue  # Skip these - they'll be handled separately
+    
     source_item = os.path.join(sourceBinariesFolder, item)
     target_item = os.path.join(targetFolderBin, item)
     if os.path.isfile(source_item):
@@ -83,6 +90,47 @@ def main():
       if os.path.exists(target_item):
         shutil.rmtree(target_item)
       shutil.copytree(source_item, target_item)
+  
+  # Copy RootDir and libg_231_0_0 folders to package root (if they exist in build output)
+  # These folders should be in the build output (bin/Config/Version/DataExchangeNodes/)
+  rootDirSource = os.path.join(sourceBinariesFolder, "RootDir")
+  libgDirSource = os.path.join(sourceBinariesFolder, "libg_231_0_0")
+  
+  # Also check if they exist in a libg folder at solution root (for development)
+  solutionRoot = os.path.join(currentFolder, "..")
+  libgFolderRoot = os.path.join(solutionRoot, "libg")
+  rootDirSourceAlt = os.path.join(libgFolderRoot, "RootDir")
+  libgDirSourceAlt = os.path.join(libgFolderRoot, "libg_231_0_0")
+  
+  # Copy RootDir folder
+  rootDirTarget = os.path.join(targetFolder, "RootDir")
+  if os.path.exists(rootDirSource):
+    if os.path.exists(rootDirTarget):
+      shutil.rmtree(rootDirTarget)
+    shutil.copytree(rootDirSource, rootDirTarget)
+    print(f"Copied RootDir from build output to package")
+  elif os.path.exists(rootDirSourceAlt):
+    if os.path.exists(rootDirTarget):
+      shutil.rmtree(rootDirTarget)
+    shutil.copytree(rootDirSourceAlt, rootDirTarget)
+    print(f"Copied RootDir from libg folder to package")
+  else:
+    print(f"Warning: RootDir folder not found. Expected at: {rootDirSource} or {rootDirSourceAlt}")
+  
+  # Copy libg_231_0_0 folder
+  libgDirTarget = os.path.join(targetFolder, "libg_231_0_0")
+  if os.path.exists(libgDirSource):
+    if os.path.exists(libgDirTarget):
+      shutil.rmtree(libgDirTarget)
+    shutil.copytree(libgDirSource, libgDirTarget)
+    print(f"Copied libg_231_0_0 from build output to package")
+  elif os.path.exists(libgDirSourceAlt):
+    if os.path.exists(libgDirTarget):
+      shutil.rmtree(libgDirTarget)
+    shutil.copytree(libgDirSourceAlt, libgDirTarget)
+    print(f"Copied libg_231_0_0 from libg folder to package")
+  else:
+    print(f"Warning: libg_231_0_0 folder not found. Expected at: {libgDirSource} or {libgDirSourceAlt}")
 
   # Helper function to make files writable before deletion (Windows permission issue)
   def make_writable(func, path, exc_info):

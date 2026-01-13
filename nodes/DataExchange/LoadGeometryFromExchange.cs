@@ -23,13 +23,151 @@ namespace DataExchangeNodes.DataExchange
         // Singleton pattern - auth provider registered by SelectExchangeElements view
         private static Func<string> _getTokenFunc = null;
         
-        // Paths to the new DLLs from colleague
-        private static readonly string DownloadsRootDir = @"C:\Users\nenovd\Downloads\Dynamo\RootDir";
-        private static readonly string DownloadsLibgDir = @"C:\Users\nenovd\Downloads\Dynamo\Libg_231_0_0";
-        private static readonly string NewProtoGeometryPath = Path.Combine(DownloadsRootDir, "ProtoGeometry.dll");
+        // Paths to the new DLLs - resolved relative to package location
+        private static string _packageRootDir = null;
+        private static string _packageLibgDir = null;
+        private static string _newProtoGeometryPath = null;
         private static Assembly _newProtoGeometryAssembly = null;
         private static Type _geometryTypeFromNewAssembly = null;
         private static bool _dependenciesLoaded = false;
+        
+        /// <summary>
+        /// Gets the package root directory by looking for RootDir or libg_231_0_0 folders
+        /// relative to the assembly location. In Dynamo packages, structure is:
+        /// packages/DataExchangeNodes/bin/ (assembly location)
+        /// packages/DataExchangeNodes/RootDir/
+        /// packages/DataExchangeNodes/libg_231_0_0/
+        /// 
+        /// In development builds, structure is:
+        /// bin/Debug/4.1.0-beta3200/DataExchangeNodes/ (assembly location)
+        /// bin/Debug/4.1.0-beta3200/DataExchangeNodes/RootDir/
+        /// bin/Debug/4.1.0-beta3200/DataExchangeNodes/libg_231_0_0/
+        /// </summary>
+        private static string GetPackageRootDirectory()
+        {
+            if (_packageRootDir != null)
+                return _packageRootDir;
+            
+            try
+            {
+                // Get the assembly location (e.g., .../packages/DataExchangeNodes/bin/ExchangeNodes.dll)
+                var assemblyLocation = Assembly.GetExecutingAssembly().Location;
+                if (string.IsNullOrEmpty(assemblyLocation))
+                {
+                    // Fallback: use CodeBase if Location is empty
+                    var codeBase = Assembly.GetExecutingAssembly().CodeBase;
+                    if (!string.IsNullOrEmpty(codeBase))
+                    {
+                        var uri = new Uri(codeBase);
+                        assemblyLocation = uri.LocalPath;
+                    }
+                }
+                
+                if (string.IsNullOrEmpty(assemblyLocation))
+                    return null;
+                
+                var assemblyDir = Path.GetDirectoryName(assemblyLocation);
+                
+                // First, check if RootDir or libg_231_0_0 exist in the same directory as the assembly (development build)
+                var rootDirInAssemblyDir = Path.Combine(assemblyDir, "RootDir");
+                var libgDirInAssemblyDir = Path.Combine(assemblyDir, "libg_231_0_0");
+                if (Directory.Exists(rootDirInAssemblyDir) || Directory.Exists(libgDirInAssemblyDir))
+                {
+                    _packageRootDir = assemblyDir;
+                    return _packageRootDir;
+                }
+                
+                // Second, go up from bin/ to package root (Dynamo package structure)
+                var binDir = assemblyDir;
+                var packageRoot = Path.GetDirectoryName(binDir);
+                
+                // Verify by checking for RootDir or libg_231_0_0 folders
+                var rootDirPath = Path.Combine(packageRoot, "RootDir");
+                var libgDirPath = Path.Combine(packageRoot, "libg_231_0_0");
+                
+                if (Directory.Exists(rootDirPath) || Directory.Exists(libgDirPath))
+                {
+                    _packageRootDir = packageRoot;
+                    return _packageRootDir;
+                }
+                
+                // Third, check if we're in a development build and look for libg folder at solution root
+                var currentDir = assemblyDir;
+                for (int i = 0; i < 5; i++) // Go up max 5 levels
+                {
+                    var libgFolder = Path.Combine(currentDir, "libg");
+                    if (Directory.Exists(libgFolder))
+                    {
+                        _packageRootDir = libgFolder;
+                        return _packageRootDir;
+                    }
+                    currentDir = Path.GetDirectoryName(currentDir);
+                    if (string.IsNullOrEmpty(currentDir))
+                        break;
+                }
+            }
+            catch (Exception)
+            {
+                // If we can't determine the package root, return null
+                // The code will fall back to checking Downloads folder
+            }
+            
+            return null;
+        }
+        
+        /// <summary>
+        /// Gets the RootDir path (contains ProtoGeometry.dll and LibG.Interface.dll)
+        /// </summary>
+        private static string GetRootDir()
+        {
+            var packageRoot = GetPackageRootDirectory();
+            if (packageRoot != null)
+            {
+                // Check if RootDir exists in package
+                var rootDir = Path.Combine(packageRoot, "RootDir");
+                if (Directory.Exists(rootDir))
+                    return rootDir;
+                
+                // Alternative: check libg/RootDir structure
+                rootDir = Path.Combine(packageRoot, "RootDir");
+                if (Directory.Exists(rootDir))
+                    return rootDir;
+            }
+            
+            // Fallback to Downloads folder (for development/testing)
+            return @"C:\Users\nenovd\Downloads\Dynamo\RootDir";
+        }
+        
+        /// <summary>
+        /// Gets the libg_231_0_0 directory path
+        /// </summary>
+        private static string GetLibgDir()
+        {
+            var packageRoot = GetPackageRootDirectory();
+            if (packageRoot != null)
+            {
+                // Check if libg_231_0_0 exists in package
+                var libgDir = Path.Combine(packageRoot, "libg_231_0_0");
+                if (Directory.Exists(libgDir))
+                    return libgDir;
+            }
+            
+            // Fallback to Downloads folder (for development/testing)
+            return @"C:\Users\nenovd\Downloads\Dynamo\Libg_231_0_0";
+        }
+        
+        /// <summary>
+        /// Gets the path to the new ProtoGeometry.dll
+        /// </summary>
+        private static string GetNewProtoGeometryPath()
+        {
+            if (_newProtoGeometryPath != null)
+                return _newProtoGeometryPath;
+            
+            var rootDir = GetRootDir();
+            _newProtoGeometryPath = Path.Combine(rootDir, "ProtoGeometry.dll");
+            return _newProtoGeometryPath;
+        }
         
         [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
         private static extern bool SetDllDirectory(string lpPathName);
@@ -47,13 +185,18 @@ namespace DataExchangeNodes.DataExchange
             
             try
             {
-                diagnostics?.Add("Loading LibG dependencies from Downloads folder...");
+                var libgDir = GetLibgDir();
+                var rootDir = GetRootDir();
+                
+                diagnostics?.Add($"Loading LibG dependencies from package...");
+                diagnostics?.Add($"  RootDir: {rootDir}");
+                diagnostics?.Add($"  LibgDir: {libgDir}");
                 
                 // Add the LibG directory to DLL search path for native DLLs
                 try
                 {
-                    SetDllDirectory(DownloadsLibgDir);
-                    diagnostics?.Add($"  ✓ Added {DownloadsLibgDir} to DLL search path");
+                    SetDllDirectory(libgDir);
+                    diagnostics?.Add($"  ✓ Added {libgDir} to DLL search path");
                 }
                 catch (Exception ex)
                 {
@@ -70,7 +213,7 @@ namespace DataExchangeNodes.DataExchange
                 
                 foreach (var dllName in managedDlls)
                 {
-                    var dllPath = Path.Combine(DownloadsLibgDir, dllName);
+                    var dllPath = Path.Combine(libgDir, dllName);
                     if (File.Exists(dllPath))
                     {
                         try
@@ -85,7 +228,7 @@ namespace DataExchangeNodes.DataExchange
                     }
                     else
                     {
-                        diagnostics?.Add($"  ⚠️ Not found: {dllName}");
+                        diagnostics?.Add($"  ⚠️ Not found: {dllName} at {dllPath}");
                     }
                 }
                 
@@ -94,7 +237,7 @@ namespace DataExchangeNodes.DataExchange
                 diagnostics?.Add($"  Note: LibGCore.dll and LibG.dll are native DLLs (will be loaded on demand)");
                 
                 // Load LibG.Interface.dll
-                var libgInterfacePath = Path.Combine(DownloadsRootDir, "LibG.Interface.dll");
+                var libgInterfacePath = Path.Combine(rootDir, "LibG.Interface.dll");
                 if (File.Exists(libgInterfacePath))
                 {
                     try
@@ -129,15 +272,16 @@ namespace DataExchangeNodes.DataExchange
                 // Load LibG dependencies first
                 LoadLibGDependencies(diagnostics);
                 
-                if (!File.Exists(NewProtoGeometryPath))
+                var protoGeometryPath = GetNewProtoGeometryPath();
+                if (!File.Exists(protoGeometryPath))
                 {
-                    diagnostics?.Add($"⚠️ New ProtoGeometry.dll not found at: {NewProtoGeometryPath}");
+                    diagnostics?.Add($"⚠️ New ProtoGeometry.dll not found at: {protoGeometryPath}");
                     diagnostics?.Add($"   Falling back to default Geometry type");
                     return typeof(Geometry);
                 }
                 
-                diagnostics?.Add($"Loading new ProtoGeometry.dll from: {NewProtoGeometryPath}");
-                _newProtoGeometryAssembly = Assembly.LoadFrom(NewProtoGeometryPath);
+                diagnostics?.Add($"Loading new ProtoGeometry.dll from: {protoGeometryPath}");
+                _newProtoGeometryAssembly = Assembly.LoadFrom(protoGeometryPath);
                 diagnostics?.Add($"✓ Loaded assembly: {_newProtoGeometryAssembly.FullName}");
                 
                 // Get Geometry type from the new assembly

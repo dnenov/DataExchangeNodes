@@ -6,7 +6,7 @@
     <Prefer32Bit>false</Prefer32Bit>
     <UseWPF>true</UseWPF>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
-    <!-- Force all NuGet package dependencies (including transitive) to be copied to output -->
+    <!-- Copy dependencies, but we'll remove unnecessary ones in post-build -->
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
   </PropertyGroup>
 
@@ -106,6 +106,42 @@
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
   </ItemGroup>
+
+  <!-- Exclude potentially unnecessary DLLs from being copied to output -->
+  <!-- This runs after ResolveAssemblyReferences but before files are copied -->
+  <Target Name="ExcludeUnnecessaryDlls" AfterTargets="ResolveAssemblyReferences" BeforeTargets="GetCopyToOutputDirectoryItems">
+    <ItemGroup>
+      <!-- Remove these DLLs from ReferenceCopyLocalPaths so they won't be copied -->
+      <!-- Using Filename metadata to match exact DLL names -->
+      <ReferenceCopyLocalPaths Remove="@(ReferenceCopyLocalPaths)" 
+                               Condition="'%(Filename)' == 'Autodesk.DataExchange.Authentication'" />
+      <ReferenceCopyLocalPaths Remove="@(ReferenceCopyLocalPaths)" 
+                               Condition="'%(Filename)' == 'Autodesk.DataExchange.CommonDependencies'" />
+      <ReferenceCopyLocalPaths Remove="@(ReferenceCopyLocalPaths)" 
+                               Condition="'%(Filename)' == 'Autodesk.DataExchange.ContractProvider'" />
+      <ReferenceCopyLocalPaths Remove="@(ReferenceCopyLocalPaths)" 
+                               Condition="'%(Filename)' == 'Autodesk.DataExchange.Exceptions'" />
+      <ReferenceCopyLocalPaths Remove="@(ReferenceCopyLocalPaths)" 
+                               Condition="'%(Filename)' == 'Autodesk.DataExchange.Extensions.Loader'" />
+      <ReferenceCopyLocalPaths Remove="@(ReferenceCopyLocalPaths)" 
+                               Condition="'%(Filename)' == 'Autodesk.DataExchange.Metrics'" />
+      <ReferenceCopyLocalPaths Remove="@(ReferenceCopyLocalPaths)" 
+                               Condition="'%(Filename)' == 'Autodesk.DataExchange.Resiliency'" />
+      <ReferenceCopyLocalPaths Remove="@(ReferenceCopyLocalPaths)" 
+                               Condition="'%(Filename)' == 'Autodesk.DataExchange.Resources'" />
+      <ReferenceCopyLocalPaths Remove="@(ReferenceCopyLocalPaths)" 
+                               Condition="'%(Filename)' == 'Autodesk.DataExchange.SourceProvider'" />
+    </ItemGroup>
+    <Message Text="Excluded unnecessary DLLs from package to reduce size" Importance="normal" />
+  </Target>
+  
+  <!-- Exclude adskdxui.exe from being copied -->
+  <Target Name="ExcludeAdskDxUi" AfterTargets="ResolveAssemblyReferences" BeforeTargets="GetCopyToOutputDirectoryItems">
+    <ItemGroup>
+      <ReferenceCopyLocalPaths Remove="@(ReferenceCopyLocalPaths)" 
+                               Condition="'%(Filename)' == 'adskdxui' AND '%(Extension)' == '.exe'" />
+    </ItemGroup>
+  </Target>
 
   <!-- Post-build step to create distributable package -->
   <Target Name="PostBuild" AfterTargets="AfterBuild">
