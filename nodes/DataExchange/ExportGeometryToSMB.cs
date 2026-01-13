@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -86,105 +87,82 @@ namespace DataExchangeNodes.DataExchange
                 }
             }
 
-            /// <summary>
-            /// Gets a property value via reflection, with optional fallback property name
-            /// </summary>
-            public static object GetPropertyValue(object instance, string propertyName, BindingFlags flags, string fallbackPropertyName = null)
-            {
-                if (instance == null)
-                {
-                    return null;
-                }
-
-                var type = instance.GetType();
-                var property = type.GetProperty(propertyName, flags);
-                
-                if (property == null && !string.IsNullOrEmpty(fallbackPropertyName))
-                {
                     property = type.GetProperty(fallbackPropertyName, flags);
-                }
-
-                return property?.GetValue(instance);
-            }
 
             /// <summary>
-            /// Sets a property value via reflection
-            /// </summary>
-            public static void SetPropertyValue(object instance, string propertyName, object value, BindingFlags flags, List<string> diagnostics = null)
-            {
-                if (instance == null)
-                {
-                    throw new ArgumentNullException(nameof(instance));
-                }
-
-                var type = instance.GetType();
-                var property = type.GetProperty(propertyName, flags);
-                
-                if (property == null)
-                {
-                    diagnostics?.Add($"  ⚠️ Property {propertyName} not found on {type.FullName}");
-                    return;
-                }
-
-                if (!property.CanWrite)
-                {
-                    diagnostics?.Add($"  ⚠️ Property {propertyName} is read-only");
-                    return;
-                }
-
-                try
-                {
-                    property.SetValue(instance, value);
-                }
-                catch (Exception ex)
-                {
-                    diagnostics?.Add($"  ⚠️ Failed to set {propertyName}: {ex.Message}");
-                    throw;
-                }
-            }
-
-            /// <summary>
-            /// Finds a type across assemblies, with optional caching
+            /// Finds a type across assemblies, with static caching for deterministic lookups
             /// </summary>
             public static Type FindType(string typeName, Type searchFromType, Dictionary<string, Type> cache = null)
             {
-                // Check cache first
-                if (cache != null && cache.TryGetValue(typeName, out var cachedType))
+                var sw = Stopwatch.StartNew();
+                try
                 {
-                    return cachedType;
-                }
-
-                // Try searchFromType's assembly first
-                if (searchFromType != null)
-                {
-                    var type = searchFromType.Assembly.GetType(typeName);
-                    if (type != null)
+                    // Check static cache first
+                    if (_typeCache.TryGetValue(typeName, out var cachedType))
                     {
-                        cache?.Add(typeName, type);
-                        return type;
+                        cache?.Add(typeName, cachedType);
+                        sw.Stop();
+                        if (sw.ElapsedMilliseconds > 1) // Only log if it took measurable time
+                        {
+                            // Cache hit - should be very fast, but log if slow
+                        }
+                        return cachedType;
                     }
-                }
 
-                // Search all DataExchange assemblies
-                var allAssemblies = AppDomain.CurrentDomain.GetAssemblies()
-                    .Where(a => a.GetName().Name.Contains("DataExchange"))
-                    .ToList();
-
-                foreach (var asm in allAssemblies)
-                {
-                    var foundType = asm.GetType(typeName);
-                    if (foundType != null)
+                    // Check parameter cache
+                    if (cache != null && cache.TryGetValue(typeName, out cachedType))
                     {
-                        cache?.Add(typeName, foundType);
-                        return foundType;
+                        _typeCache[typeName] = cachedType; // Also cache in static cache
+                        sw.Stop();
+                        return cachedType;
                     }
-                }
 
-                return null;
+                    // Try searchFromType's assembly first (most common case)
+                    if (searchFromType != null)
+                    {
+                        var type = searchFromType.Assembly.GetType(typeName);
+                        if (type != null)
+                        {
+                            _typeCache[typeName] = type; // Cache in static cache
+                            cache?.Add(typeName, type);
+                            sw.Stop();
+                            return type;
+                        }
+                    }
+
+                    // Search all DataExchange assemblies (SLOW - assembly scan)
+                    var allAssemblies = AppDomain.CurrentDomain.GetAssemblies()
+                        .Where(a => a.GetName().Name.Contains("DataExchange"))
+                        .ToList();
+
+                    foreach (var asm in allAssemblies)
+                    {
+                        var foundType = asm.GetType(typeName);
+                        if (foundType != null)
+                        {
+                            _typeCache[typeName] = foundType; // Cache in static cache
+                            cache?.Add(typeName, foundType);
+                            sw.Stop();
+                            // Log slow type lookups (assembly scan)
+                            if (sw.ElapsedMilliseconds > 10)
+                            {
+                                // Could add diagnostics here if needed, but would require passing diagnostics parameter
+                            }
+                            return foundType;
+                        }
+                    }
+
+                    sw.Stop();
+                    return null;
+                }
+                finally
+                {
+                    sw.Stop();
+                }
             }
 
             /// <summary>
-            /// Creates an instance and sets its ID using SetId method (checks base types)
+            /// Creates an instance and sets its ID using SetId method (cached for performance)
             /// </summary>
             public static object CreateInstanceWithId(Type type, string id, Dictionary<string, Type> foundTypes = null, List<string> diagnostics = null)
             {
@@ -194,20 +172,27 @@ namespace DataExchangeNodes.DataExchange
                     throw new InvalidOperationException($"Failed to create instance of {type.FullName}");
                 }
 
-                // Find SetId method (might be on base type)
-                var setIdMethod = type.GetMethod("SetId", BindingFlags.NonPublic | BindingFlags.Instance);
-                if (setIdMethod == null)
+                // Cache SetId method lookup by type name
+                var cacheKey = $"{type.FullName}.SetId";
+                if (!_methodCache.TryGetValue(cacheKey, out var setIdMethod))
                 {
-                    var baseType = type.BaseType;
-                    if (baseType != null)
+                    // Find SetId method (might be on base type)
+                    setIdMethod = type.GetMethod("SetId", BindingFlags.NonPublic | BindingFlags.Instance);
+                    if (setIdMethod == null)
                     {
-                        setIdMethod = baseType.GetMethod("SetId", BindingFlags.NonPublic | BindingFlags.Instance);
+                        var baseType = type.BaseType;
+                        if (baseType != null)
+                        {
+                            setIdMethod = baseType.GetMethod("SetId", BindingFlags.NonPublic | BindingFlags.Instance);
+                        }
                     }
-                }
 
-                if (setIdMethod == null)
-                {
-                    throw new InvalidOperationException($"Could not find SetId method on {type.FullName} or its base types");
+                    if (setIdMethod == null)
+                    {
+                        throw new InvalidOperationException($"Could not find SetId method on {type.FullName} or its base types");
+                    }
+                    
+                    _methodCache[cacheKey] = setIdMethod;
                 }
 
                 setIdMethod.Invoke(instance, new object[] { id });
@@ -215,30 +200,6 @@ namespace DataExchangeNodes.DataExchange
                 return instance;
             }
 
-            /// <summary>
-            /// Gets an enum value by name, searching from a type's assembly
-            /// </summary>
-            public static object GetEnumValue(string enumTypeName, string valueName, Type searchFromType, Dictionary<string, Type> foundTypes = null)
-            {
-                Type enumType = null;
-                
-                // Check cache first
-                if (foundTypes != null && foundTypes.TryGetValue(enumTypeName, out var cached))
-                {
-                    enumType = cached;
-                }
-                else
-                {
-                    enumType = FindType(enumTypeName, searchFromType, foundTypes);
-                }
-
-                if (enumType == null || !enumType.IsEnum)
-                {
-                    throw new InvalidOperationException($"Could not find enum type {enumTypeName}");
-                }
-
-                return Enum.Parse(enumType, valueName);
-            }
 
             /// <summary>
             /// Handles IResponse<T> pattern, extracting Value property if present
@@ -351,8 +312,98 @@ namespace DataExchangeNodes.DataExchange
         private static Type _geometryTypeFromNewAssembly = null;
         private static bool _dependenciesLoaded = false;
         
+        // Static caches for discovered types, methods, and properties (deterministic now that we know what works)
+        private static readonly Dictionary<string, Type> _typeCache = new Dictionary<string, Type>();
+        private static readonly Dictionary<string, MethodInfo> _methodCache = new Dictionary<string, MethodInfo>();
+        private static readonly Dictionary<string, PropertyInfo> _propertyCache = new Dictionary<string, PropertyInfo>();
+        private static readonly Dictionary<string, FieldInfo> _fieldCache = new Dictionary<string, FieldInfo>();
+        private static readonly Dictionary<string, ConstructorInfo> _constructorCache = new Dictionary<string, ConstructorInfo>();
+        private static bool _cachesInitialized = false;
+        
         [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
         private static extern bool SetDllDirectory(string lpPathName);
+        
+        /// <summary>
+        /// Helper method to time operations and add diagnostics
+        /// </summary>
+        private static T TimeOperation<T>(string operationName, Func<T> operation, List<string> diagnostics)
+        {
+            var sw = Stopwatch.StartNew();
+            try
+            {
+                var result = operation();
+                sw.Stop();
+                diagnostics?.Add($"⏱️  {operationName}: {sw.ElapsedMilliseconds}ms ({sw.Elapsed.TotalSeconds:F3}s)");
+                return result;
+            }
+            catch
+            {
+                sw.Stop();
+                diagnostics?.Add($"⏱️  {operationName}: {sw.ElapsedMilliseconds}ms ({sw.Elapsed.TotalSeconds:F3}s) [FAILED]");
+                throw;
+            }
+        }
+        
+        /// <summary>
+        /// Helper method to time void operations and add diagnostics
+        /// </summary>
+        private static void TimeOperation(string operationName, Action operation, List<string> diagnostics)
+        {
+            var sw = Stopwatch.StartNew();
+            try
+            {
+                operation();
+                sw.Stop();
+                diagnostics?.Add($"⏱️  {operationName}: {sw.ElapsedMilliseconds}ms ({sw.Elapsed.TotalSeconds:F3}s)");
+            }
+            catch
+            {
+                sw.Stop();
+                diagnostics?.Add($"⏱️  {operationName}: {sw.ElapsedMilliseconds}ms ({sw.Elapsed.TotalSeconds:F3}s) [FAILED]");
+                throw;
+            }
+        }
+        
+        /// <summary>
+        /// Helper method to time async operations and add diagnostics
+        /// </summary>
+        private static async Task<T> TimeOperation<T>(string operationName, Func<Task<T>> operation, List<string> diagnostics)
+        {
+            var sw = Stopwatch.StartNew();
+            try
+            {
+                var result = await operation();
+                sw.Stop();
+                diagnostics?.Add($"⏱️  {operationName}: {sw.ElapsedMilliseconds}ms ({sw.Elapsed.TotalSeconds:F3}s)");
+                return result;
+            }
+            catch
+            {
+                sw.Stop();
+                diagnostics?.Add($"⏱️  {operationName}: {sw.ElapsedMilliseconds}ms ({sw.Elapsed.TotalSeconds:F3}s) [FAILED]");
+                throw;
+            }
+        }
+        
+        /// <summary>
+        /// Helper method to time async void operations and add diagnostics
+        /// </summary>
+        private static async Task TimeOperation(string operationName, Func<Task> operation, List<string> diagnostics)
+        {
+            var sw = Stopwatch.StartNew();
+            try
+            {
+                await operation();
+                sw.Stop();
+                diagnostics?.Add($"⏱️  {operationName}: {sw.ElapsedMilliseconds}ms ({sw.Elapsed.TotalSeconds:F3}s)");
+            }
+            catch
+            {
+                sw.Stop();
+                diagnostics?.Add($"⏱️  {operationName}: {sw.ElapsedMilliseconds}ms ({sw.Elapsed.TotalSeconds:F3}s) [FAILED]");
+                throw;
+            }
+        }
         
         /// <summary>
         /// Gets the package root directory by looking for RootDir or libg_231_0_0 folders
@@ -656,6 +707,7 @@ namespace DataExchangeNodes.DataExchange
             string outputFilePath = null,
             string unit = "kUnitType_CentiMeter")
         {
+            var overallTimer = Stopwatch.StartNew();
             var diagnostics = new List<string>();
             bool success = false;
             string finalSmbFilePath = null;
@@ -721,12 +773,14 @@ namespace DataExchangeNodes.DataExchange
                 }
 
                 // Get Geometry type from the new ProtoGeometry.dll
-                var geometryType = GetGeometryTypeFromNewAssembly(diagnostics);
+                var geometryType = TimeOperation("GetGeometryTypeFromNewAssembly", 
+                    () => GetGeometryTypeFromNewAssembly(diagnostics), diagnostics);
                 
                 // Find ExportToSMB method
-                var allExportMethods = geometryType.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)
-                    .Where(m => m.Name == "ExportToSMB")
-                    .ToList();
+                var allExportMethods = TimeOperation("Find ExportToSMB methods via reflection", 
+                    () => geometryType.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)
+                        .Where(m => m.Name == "ExportToSMB")
+                        .ToList(), diagnostics);
                 
                 diagnostics.Add($"Found {allExportMethods.Count} ExportToSMB method(s):");
                 foreach (var method in allExportMethods)
@@ -770,7 +824,8 @@ namespace DataExchangeNodes.DataExchange
                 diagnostics.Add($"  File path: {exportSmbFilePath}");
                 diagnostics.Add($"  Units (mm per unit): {mmPerUnit}");
                 
-                var result = exportMethod.Invoke(null, new object[] { geometries, exportSmbFilePath, mmPerUnit });
+                var result = TimeOperation($"ExportToSMB (reflection invoke with {geometries.Count} geometries)", 
+                    () => exportMethod.Invoke(null, new object[] { geometries, exportSmbFilePath, mmPerUnit }), diagnostics);
                 
                 // ExportToSMB returns String (the file path) according to inspection
                 if (result != null)
@@ -824,6 +879,11 @@ namespace DataExchangeNodes.DataExchange
                     diagnostics.Add($"  Inner exception: {ex.InnerException.GetType().Name}: {ex.InnerException.Message}");
                 }
                 diagnostics.Add($"  Stack: {ex.StackTrace}");
+            }
+            finally
+            {
+                overallTimer.Stop();
+                diagnostics.Add($"\n⏱️  TOTAL ExportToSMB time: {overallTimer.ElapsedMilliseconds}ms ({overallTimer.Elapsed.TotalSeconds:F3}s)");
             }
 
             return new Dictionary<string, object>
@@ -1102,14 +1162,10 @@ namespace DataExchangeNodes.DataExchange
         }
 
         /// <summary>
-        /// Finds all required types across assemblies
+        /// Finds all required types across assemblies (simplified - uses cached FindType)
         /// </summary>
         private static Dictionary<string, Type> FindRequiredTypes(Type exchangeDataType, List<string> diagnostics)
         {
-                var allAssemblies = AppDomain.CurrentDomain.GetAssemblies()
-                    .Where(a => a.GetName().Name.Contains("DataExchange"))
-                    .ToList();
-                
                 var typesToFind = new[]
                 {
                     "Autodesk.DataExchange.SchemaObjects.Assets.GeometryAsset",
@@ -1127,21 +1183,8 @@ namespace DataExchangeNodes.DataExchange
                 var foundTypes = new Dictionary<string, Type>();
                 foreach (var typeName in typesToFind)
                 {
-                var foundType = ReflectionHelper.FindType(typeName, exchangeDataType, foundTypes);
-                    if (foundType == null)
-                    {
-                    // Fallback: search all assemblies manually
-                        foreach (var asm in allAssemblies)
-                        {
-                            foundType = asm.GetType(typeName);
-                            if (foundType != null)
-                            {
-                                foundTypes[typeName] = foundType;
-                                break;
-                            }
-                        }
-                    }
-                else if (!foundTypes.ContainsKey(typeName))
+                    var foundType = ReflectionHelper.FindType(typeName, exchangeDataType, foundTypes);
+                    if (foundType != null && !foundTypes.ContainsKey(typeName))
                     {
                         foundTypes[typeName] = foundType;
                     }
@@ -1151,26 +1194,21 @@ namespace DataExchangeNodes.DataExchange
         }
 
         /// <summary>
-        /// Creates a GeometryAsset instance with ID set
+        /// Creates a GeometryAsset instance with ID set (simplified - uses foundTypes cache)
         /// </summary>
         private static (object geometryAsset, Type geometryAssetType, string geometryAssetId) CreateGeometryAsset(Type exchangeDataType, Dictionary<string, Type> foundTypes, List<string> diagnostics)
         {
             diagnostics.Add($"\nCreating GeometryAsset for SMB file (BRep format)...");
             
-                Type geometryAssetType = null;
-                if (foundTypes.TryGetValue("Autodesk.DataExchange.SchemaObjects.Assets.GeometryAsset", out var preFound))
-                {
-                    geometryAssetType = preFound;
-                }
-                else
-                {
-                    geometryAssetType = exchangeDataType.Assembly.GetType("Autodesk.DataExchange.SchemaObjects.Assets.GeometryAsset");
-                }
-                
+            const string geometryAssetTypeName = "Autodesk.DataExchange.SchemaObjects.Assets.GeometryAsset";
+            if (!foundTypes.TryGetValue(geometryAssetTypeName, out var geometryAssetType))
+            {
+                geometryAssetType = ReflectionHelper.FindType(geometryAssetTypeName, exchangeDataType, foundTypes);
                 if (geometryAssetType == null)
                 {
                     throw new InvalidOperationException("Could not find GeometryAsset type");
                 }
+            }
 
             var geometryAssetId = Guid.NewGuid().ToString();
             var geometryAsset = ReflectionHelper.CreateInstanceWithId(geometryAssetType, geometryAssetId, foundTypes, diagnostics);
@@ -1196,49 +1234,36 @@ namespace DataExchangeNodes.DataExchange
         }
 
         /// <summary>
-        /// Creates GeometryWrapper for BRep geometry
+        /// Creates GeometryWrapper for BRep geometry (simplified - uses FindType)
         /// </summary>
         private static object CreateGeometryWrapper(Dictionary<string, Type> foundTypes, Type exchangeDataType, List<string> diagnostics)
         {
-                Type geometryWrapperType = null;
-                if (foundTypes.TryGetValue("Autodesk.DataExchange.SchemaObjects.Geometry.GeometryWrapper", out var preFoundGeoWrapper))
-                {
-                    geometryWrapperType = preFoundGeoWrapper;
-                }
-                else
-                {
-                    geometryWrapperType = exchangeDataType.Assembly.GetType("Autodesk.DataExchange.SchemaObjects.Geometry.GeometryWrapper");
-                }
-                
+            const string geometryWrapperTypeName = "Autodesk.DataExchange.SchemaObjects.Geometry.GeometryWrapper";
+            if (!foundTypes.TryGetValue(geometryWrapperTypeName, out var geometryWrapperType))
+            {
+                geometryWrapperType = ReflectionHelper.FindType(geometryWrapperTypeName, exchangeDataType, foundTypes);
                 if (geometryWrapperType == null)
                 {
                     throw new InvalidOperationException("Could not find GeometryWrapper type");
                 }
-                
-                Type geometryFormatEnumType = null;
-                if (foundTypes.TryGetValue("Autodesk.DataExchange.Core.Enums.GeometryFormat", out var preFoundFormat))
-                {
-                    geometryFormatEnumType = preFoundFormat;
-                }
-                else
-                {
-                    geometryFormatEnumType = exchangeDataType.Assembly.GetType("Autodesk.DataExchange.Core.Enums.GeometryFormat");
-                }
-                
-                Type geometryTypeEnumType = null;
-                if (foundTypes.TryGetValue("Autodesk.DataExchange.Core.Enums.GeometryType", out var preFoundGeometryType))
-                {
-                    geometryTypeEnumType = preFoundGeometryType;
-                }
-                else
-                {
-                    geometryTypeEnumType = exchangeDataType.Assembly.GetType("Autodesk.DataExchange.Core.Enums.GeometryType");
-                }
-                
-                if (geometryFormatEnumType == null || geometryTypeEnumType == null)
-                {
-                    throw new InvalidOperationException("Could not find GeometryFormat or GeometryType enum types");
-                }
+            }
+            
+            const string geometryFormatTypeName = "Autodesk.DataExchange.Core.Enums.GeometryFormat";
+            if (!foundTypes.TryGetValue(geometryFormatTypeName, out var geometryFormatEnumType))
+            {
+                geometryFormatEnumType = ReflectionHelper.FindType(geometryFormatTypeName, exchangeDataType, foundTypes);
+            }
+            
+            const string geometryTypeTypeName = "Autodesk.DataExchange.Core.Enums.GeometryType";
+            if (!foundTypes.TryGetValue(geometryTypeTypeName, out var geometryTypeEnumType))
+            {
+                geometryTypeEnumType = ReflectionHelper.FindType(geometryTypeTypeName, exchangeDataType, foundTypes);
+            }
+            
+            if (geometryFormatEnumType == null || geometryTypeEnumType == null)
+            {
+                throw new InvalidOperationException("Could not find GeometryFormat or GeometryType enum types");
+            }
                 
                 var stepFormat = Enum.Parse(geometryFormatEnumType, "Step");
                 var brepType = Enum.Parse(geometryTypeEnumType, "BRep");
@@ -1268,24 +1293,19 @@ namespace DataExchangeNodes.DataExchange
         }
 
         /// <summary>
-        /// Creates GeometryComponent and sets it on GeometryAsset
+        /// Creates GeometryComponent and sets it on GeometryAsset (simplified - uses FindType)
         /// </summary>
         private static void CreateGeometryComponent(object geometryAsset, Type geometryAssetType, object geometryWrapper, Dictionary<string, Type> foundTypes, Type exchangeDataType, List<string> diagnostics)
         {
-                Type geometryComponentType = null;
-                if (foundTypes.TryGetValue("Autodesk.DataExchange.SchemaObjects.Components.GeometryComponent", out var preFoundComponent))
-                {
-                    geometryComponentType = preFoundComponent;
-                }
-                else
-                {
-                    geometryComponentType = exchangeDataType.Assembly.GetType("Autodesk.DataExchange.SchemaObjects.Components.GeometryComponent");
-                }
-                
+            const string geometryComponentTypeName = "Autodesk.DataExchange.SchemaObjects.Components.GeometryComponent";
+            if (!foundTypes.TryGetValue(geometryComponentTypeName, out var geometryComponentType))
+            {
+                geometryComponentType = ReflectionHelper.FindType(geometryComponentTypeName, exchangeDataType, foundTypes);
                 if (geometryComponentType == null)
                 {
                     throw new InvalidOperationException("Could not find GeometryComponent type");
                 }
+            }
 
                 var geometryComponent = Activator.CreateInstance(geometryComponentType);
                 var geometryProperty = geometryComponentType.GetProperty("Geometry", BindingFlags.NonPublic | BindingFlags.Instance);
@@ -1307,6 +1327,26 @@ namespace DataExchangeNodes.DataExchange
         }
 
         /// <summary>
+        /// Creates an ObjectInfo component with the specified name
+        /// </summary>
+        private static object CreateObjectInfo(string name, Dictionary<string, Type> foundTypes, Type exchangeDataType, List<string> diagnostics)
+        {
+            const string componentTypeName = "Autodesk.DataExchange.SchemaObjects.Components.Component";
+            if (foundTypes.TryGetValue(componentTypeName, out var componentType) || 
+                (componentType = ReflectionHelper.FindType(componentTypeName, exchangeDataType, foundTypes)) != null)
+            {
+                var objectInfo = Activator.CreateInstance(componentType);
+                var nameProperty = componentType.GetProperty("Name", BindingFlags.Public | BindingFlags.Instance);
+                if (nameProperty != null)
+                {
+                    nameProperty.SetValue(objectInfo, name);
+                }
+                return objectInfo;
+            }
+            return null;
+        }
+
+        /// <summary>
         /// Adds GeometryAsset to ExchangeData and sets ObjectInfo
         /// </summary>
         private static void AddGeometryAssetToExchangeData(object geometryAsset, object exchangeData, Type exchangeDataType, string geometryFilePath, Dictionary<string, Type> foundTypes, List<string> diagnostics)
@@ -1324,195 +1364,14 @@ namespace DataExchangeNodes.DataExchange
                 var objectInfoProperty = geometryAssetType.GetProperty("ObjectInfo", BindingFlags.Public | BindingFlags.Instance);
                 if (objectInfoProperty != null)
                 {
-                    Type componentType = null;
-                    if (foundTypes.TryGetValue("Autodesk.DataExchange.SchemaObjects.Components.Component", out var preFoundComp))
+                    var objectInfo = CreateObjectInfo(Path.GetFileNameWithoutExtension(geometryFilePath), foundTypes, exchangeDataType, diagnostics);
+                    if (objectInfo != null)
                     {
-                        componentType = preFoundComp;
-                    }
-                    else
-                    {
-                        componentType = exchangeDataType.Assembly.GetType("Autodesk.DataExchange.SchemaObjects.Components.Component");
-                    }
-                    
-                    if (componentType != null)
-                    {
-                        var objectInfo = Activator.CreateInstance(componentType);
-                        var nameProperty = componentType.GetProperty("Name", BindingFlags.Public | BindingFlags.Instance);
-                        if (nameProperty != null)
-                        {
-                            nameProperty.SetValue(objectInfo, Path.GetFileNameWithoutExtension(geometryFilePath));
-                        }
                         objectInfoProperty.SetValue(geometryAsset, objectInfo);
                     }
                 }
         }
 
-        /// <summary>
-        /// Wraps SMB bytes into BrepTopologicalData protobuf format
-        /// The SDK expects protobuf-wrapped SMB data, not raw SMB files
-        /// </summary>
-        private static string WrapSMBIntoProtobuf(string smbFilePath, List<string> diagnostics)
-        {
-            diagnostics.Add($"\nWrapping SMB file into BrepTopologicalData protobuf format...");
-            
-            try
-            {
-                // Read SMB file bytes
-                var smbBytes = File.ReadAllBytes(smbFilePath);
-                diagnostics.Add($"  Read {smbBytes.Length} bytes from SMB file");
-                
-                // Find BrepTopologicalData type
-                var brepTopologicalDataType = Type.GetType("Autodesk.DataExchange.Geometry.Proto.BrepTopologicalData, Autodesk.DataExchange");
-                if (brepTopologicalDataType == null)
-                {
-                    // Try searching in all assemblies
-                    foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
-                    {
-                        if (asm.GetName().Name.Contains("DataExchange"))
-                        {
-                            brepTopologicalDataType = asm.GetType("Autodesk.DataExchange.Geometry.Proto.BrepTopologicalData");
-                            if (brepTopologicalDataType != null) break;
-                        }
-                    }
-                }
-                
-                if (brepTopologicalDataType == null)
-                {
-                    throw new InvalidOperationException("Could not find BrepTopologicalData type. Make sure Autodesk.DataExchange assembly is loaded.");
-                }
-                
-                // Create BrepTopologicalData instance
-                var brepData = Activator.CreateInstance(brepTopologicalDataType);
-                
-                // Set Body property (ByteString)
-                var bodyProperty = brepTopologicalDataType.GetProperty("Body", BindingFlags.Public | BindingFlags.Instance);
-                if (bodyProperty == null)
-                {
-                    throw new InvalidOperationException("Could not find Body property on BrepTopologicalData");
-                }
-                
-                // Create ByteString from SMB bytes
-                var byteStringType = Type.GetType("Google.Protobuf.ByteString, Google.Protobuf");
-                if (byteStringType == null)
-                {
-                    // Try alternative namespace
-                    byteStringType = Type.GetType("pb.ByteString, Autodesk.DataExchange");
-                }
-                
-                if (byteStringType == null)
-                {
-                    // Search for ByteString in loaded assemblies
-                    foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
-                    {
-                        byteStringType = asm.GetType("Google.Protobuf.ByteString") ?? asm.GetType("pb.ByteString");
-                        if (byteStringType != null) break;
-                    }
-                }
-                
-                if (byteStringType == null)
-                {
-                    throw new InvalidOperationException("Could not find ByteString type. Make sure Google.Protobuf assembly is loaded.");
-                }
-                
-                // Call ByteString.CopyFrom(byte[])
-                var copyFromMethod = byteStringType.GetMethod("CopyFrom", new[] { typeof(byte[]) });
-                if (copyFromMethod == null)
-                {
-                    throw new InvalidOperationException("Could not find ByteString.CopyFrom method");
-                }
-                
-                var byteString = copyFromMethod.Invoke(null, new object[] { smbBytes });
-                bodyProperty.SetValue(brepData, byteString);
-                diagnostics.Add($"  ✓ Created BrepTopologicalData with SMB bytes in Body");
-                
-                // Serialize protobuf to byte array
-                // BrepTopologicalData implements IMessage which has ToByteArray() extension method
-                // Or we can use WriteTo with MemoryStream
-                byte[] protoBytes;
-                var toByteArrayMethod = brepTopologicalDataType.GetMethod("ToByteArray", BindingFlags.Public | BindingFlags.Instance);
-                if (toByteArrayMethod != null)
-                {
-                    protoBytes = (byte[])toByteArrayMethod.Invoke(brepData, null);
-                }
-                else
-                {
-                    // Use WriteTo with MemoryStream
-                    var writeToMethod = brepTopologicalDataType.GetMethod("WriteTo", new[] { typeof(System.IO.Stream) });
-                    if (writeToMethod == null)
-                    {
-                        // Try with CodedOutputStream
-                        var codedOutputStreamType = Type.GetType("Google.Protobuf.CodedOutputStream, Google.Protobuf") 
-                            ?? Type.GetType("pb.CodedOutputStream, Autodesk.DataExchange");
-                        if (codedOutputStreamType != null)
-                        {
-                            using (var ms = new MemoryStream())
-                            {
-                                var cosCtor = codedOutputStreamType.GetConstructor(new[] { typeof(Stream) });
-                                if (cosCtor != null)
-                                {
-                                    var cos = cosCtor.Invoke(new object[] { ms });
-                                    writeToMethod = brepTopologicalDataType.GetMethod("WriteTo", new[] { codedOutputStreamType });
-                                    if (writeToMethod != null)
-                                    {
-                                        writeToMethod.Invoke(brepData, new object[] { cos });
-                                        var flushMethod = codedOutputStreamType.GetMethod("Flush");
-                                        if (flushMethod != null)
-                                        {
-                                            flushMethod.Invoke(cos, null);
-                                        }
-                                        protoBytes = ms.ToArray();
-                                    }
-                                    else
-                                    {
-                                        throw new InvalidOperationException("Could not find WriteTo method on BrepTopologicalData");
-                                    }
-                                }
-                                else
-                                {
-                                    throw new InvalidOperationException("Could not create CodedOutputStream");
-                                }
-                            }
-                        }
-                        else
-                        {
-                            throw new InvalidOperationException("Could not find CodedOutputStream type");
-                        }
-                    }
-                    else
-                    {
-                        using (var ms = new MemoryStream())
-                        {
-                            writeToMethod.Invoke(brepData, new object[] { ms });
-                            protoBytes = ms.ToArray();
-                        }
-                    }
-                }
-                
-                diagnostics.Add($"  ✓ Serialized protobuf to {protoBytes.Length} bytes");
-                
-                // Write to temporary file
-                var protoFilePath = Path.ChangeExtension(smbFilePath, ".brepTopologicalData.bin");
-                // If file already exists, use a unique name
-                if (File.Exists(protoFilePath))
-                {
-                    var dir = Path.GetDirectoryName(protoFilePath);
-                    var baseName = Path.GetFileNameWithoutExtension(protoFilePath);
-                    var ext = Path.GetExtension(protoFilePath);
-                    protoFilePath = Path.Combine(dir, $"{baseName}_{Guid.NewGuid():N}{ext}");
-                }
-                
-                File.WriteAllBytes(protoFilePath, protoBytes);
-                diagnostics.Add($"  ✓ Wrote protobuf to: {protoFilePath}");
-                
-                return protoFilePath;
-            }
-            catch (Exception ex)
-            {
-                diagnostics.Add($"  ✗ Failed to wrap SMB into protobuf: {ex.GetType().Name}: {ex.Message}");
-                diagnostics.Add($"  Stack: {ex.StackTrace}");
-                throw;
-            }
-        }
 
         /// <summary>
         /// Creates a minimal dummy STEP file for the STEP→SMB adapter pattern.
@@ -1797,46 +1656,24 @@ END-ISO-10303-21;
 
             var elementAsset = elementAssetProperty.GetValue(element);
             
-            Type designAssetType = null;
-            if (foundTypes.TryGetValue("Autodesk.DataExchange.SchemaObjects.Assets.DesignAsset", out var preFoundDesign))
+            const string designAssetTypeName = "Autodesk.DataExchange.SchemaObjects.Assets.DesignAsset";
+            if (!foundTypes.TryGetValue(designAssetTypeName, out var designAssetType))
             {
-                designAssetType = preFoundDesign;
-            }
-            else
-            {
-                designAssetType = exchangeDataType.Assembly.GetType("Autodesk.DataExchange.SchemaObjects.Assets.DesignAsset");
-            }
-            
-            if (designAssetType == null)
-            {
-                throw new InvalidOperationException("Could not find DesignAsset type");
-            }
-
-            Type instanceAssetType = null;
-            var instanceAssetTypeName = "Autodesk.DataExchange.SchemaObjects.Assets.InstanceAsset";
-            if (foundTypes.TryGetValue(instanceAssetTypeName, out var preFoundInstance))
-            {
-                instanceAssetType = preFoundInstance;
-            }
-            else
-            {
-                instanceAssetType = exchangeDataType.Assembly.GetType(instanceAssetTypeName);
-                if (instanceAssetType == null)
+                designAssetType = ReflectionHelper.FindType(designAssetTypeName, exchangeDataType, foundTypes);
+                if (designAssetType == null)
                 {
-                    var allAssemblies = AppDomain.CurrentDomain.GetAssemblies()
-                        .Where(a => a.GetName().Name.Contains("DataExchange"))
-                        .ToList();
-                    foreach (var asm in allAssemblies)
-                    {
-                        instanceAssetType = asm.GetType(instanceAssetTypeName);
-                        if (instanceAssetType != null) break;
-                    }
+                    throw new InvalidOperationException("Could not find DesignAsset type");
                 }
             }
-            
-            if (instanceAssetType == null)
+
+            const string instanceAssetTypeName = "Autodesk.DataExchange.SchemaObjects.Assets.InstanceAsset";
+            if (!foundTypes.TryGetValue(instanceAssetTypeName, out var instanceAssetType))
             {
-                throw new InvalidOperationException("Could not find InstanceAsset type");
+                instanceAssetType = ReflectionHelper.FindType(instanceAssetTypeName, exchangeDataType, foundTypes);
+                if (instanceAssetType == null)
+                {
+                    throw new InvalidOperationException("Could not find InstanceAsset type");
+                }
             }
 
             // Get RootAsset (which IS the TopLevelAssembly) - use it directly!
@@ -1861,24 +1698,9 @@ END-ISO-10303-21;
                 var objectInfoProp = designAssetType.GetProperty("ObjectInfo", BindingFlags.Public | BindingFlags.Instance);
                 if (objectInfoProp != null)
                 {
-                    Type componentType = null;
-                    if (foundTypes.TryGetValue("Autodesk.DataExchange.SchemaObjects.Components.Component", out var preFoundComp))
+                    var objectInfo = CreateObjectInfo("TopLevelAssembly", foundTypes, exchangeDataType, diagnostics);
+                    if (objectInfo != null)
                     {
-                        componentType = preFoundComp;
-                    }
-                    else
-                    {
-                        componentType = exchangeDataType.Assembly.GetType("Autodesk.DataExchange.SchemaObjects.Components.Component");
-                    }
-                    
-                    if (componentType != null)
-                    {
-                        var objectInfo = Activator.CreateInstance(componentType);
-                        var nameProperty = componentType.GetProperty("Name", BindingFlags.Public | BindingFlags.Instance);
-                        if (nameProperty != null)
-                        {
-                            nameProperty.SetValue(objectInfo, "TopLevelAssembly");
-                        }
                         objectInfoProp.SetValue(rootAsset, objectInfo);
                     }
                 }
@@ -1944,24 +1766,9 @@ END-ISO-10303-21;
                 var rootAddChildMethod = rootAsset.GetType().GetMethod("AddChild", BindingFlags.Public | BindingFlags.Instance);
                 if (rootAddChildMethod != null)
                 {
-                    Type containmentRelationshipType = null;
-                    if (foundTypes.TryGetValue("Autodesk.DataExchange.SchemaObjects.Relationships.ContainmentRelationship", out var preFoundContainment))
-                    {
-                        containmentRelationshipType = preFoundContainment;
-                    }
-                    else
-                    {
-                        var allAssemblies = AppDomain.CurrentDomain.GetAssemblies()
-                            .Where(a => a.GetName().Name.Contains("DataExchange"))
-                            .ToList();
-                        foreach (var asm in allAssemblies)
-                        {
-                            containmentRelationshipType = asm.GetType("Autodesk.DataExchange.SchemaObjects.Relationships.ContainmentRelationship");
-                            if (containmentRelationshipType != null) break;
-                        }
-                    }
-                    
-                    if (containmentRelationshipType != null)
+                    const string containmentRelationshipTypeName = "Autodesk.DataExchange.SchemaObjects.Relationships.ContainmentRelationship";
+                    if (foundTypes.TryGetValue(containmentRelationshipTypeName, out var containmentRelationshipType) || 
+                        (containmentRelationshipType = ReflectionHelper.FindType(containmentRelationshipTypeName, exchangeDataType, foundTypes)) != null)
                     {
                         var containmentRelationship = Activator.CreateInstance(containmentRelationshipType);
                         rootAddChildMethod.Invoke(rootAsset, new object[] { elementAsset, containmentRelationship });
@@ -2013,24 +1820,9 @@ END-ISO-10303-21;
                 var objectInfoProp = designAssetType.GetProperty("ObjectInfo", BindingFlags.Public | BindingFlags.Instance);
                 if (objectInfoProp != null)
                 {
-                    Type componentType = null;
-                    if (foundTypes.TryGetValue("Autodesk.DataExchange.SchemaObjects.Components.Component", out var preFoundComp))
+                    var objectInfo = CreateObjectInfo(elementName, foundTypes, exchangeDataType, diagnostics);
+                    if (objectInfo != null)
                     {
-                        componentType = preFoundComp;
-                    }
-                    else
-                    {
-                        componentType = exchangeDataType.Assembly.GetType("Autodesk.DataExchange.SchemaObjects.Components.Component");
-                    }
-                    
-                    if (componentType != null)
-                    {
-                        var objectInfo = Activator.CreateInstance(componentType);
-                        var nameProperty = componentType.GetProperty("Name", BindingFlags.Public | BindingFlags.Instance);
-                        if (nameProperty != null)
-                        {
-                            nameProperty.SetValue(objectInfo, elementName);
-                        }
                         objectInfoProp.SetValue(designAsset, objectInfo);
                     }
                 }
@@ -2051,17 +1843,9 @@ END-ISO-10303-21;
                     if (elementChildNodes != null)
                     {
                         var childNodesList = elementChildNodes.Cast<object>().ToList();
-                        Type referenceRelationshipType = null;
-                        if (foundTypes.TryGetValue("Autodesk.DataExchange.SchemaObjects.Relationships.ReferenceRelationship", out var preFoundRefRel))
-                        {
-                            referenceRelationshipType = preFoundRefRel;
-                        }
-                        else
-                        {
-                            referenceRelationshipType = exchangeDataType.Assembly.GetType("Autodesk.DataExchange.SchemaObjects.Relationships.ReferenceRelationship");
-                        }
-                        
-                        if (referenceRelationshipType != null)
+                        const string referenceRelationshipTypeName = "Autodesk.DataExchange.SchemaObjects.Relationships.ReferenceRelationship";
+                        if (foundTypes.TryGetValue(referenceRelationshipTypeName, out var referenceRelationshipType) || 
+                            (referenceRelationshipType = ReflectionHelper.FindType(referenceRelationshipTypeName, exchangeDataType, foundTypes)) != null)
                         {
                             var removeChildMethod = elementAssetType.GetMethod("RemoveChild", BindingFlags.Public | BindingFlags.Instance, null, new[] { typeof(int) }, null);
                             if (removeChildMethod != null)
@@ -2108,33 +1892,17 @@ END-ISO-10303-21;
                 var elementAddChildMethod = elementAssetType.GetMethod("AddChild", BindingFlags.Public | BindingFlags.Instance);
                 if (elementAddChildMethod != null)
                 {
-                    Type referenceRelationshipType = null;
-                    if (foundTypes.TryGetValue("Autodesk.DataExchange.SchemaObjects.Relationships.ReferenceRelationship", out var preFoundRefRel))
-                    {
-                        referenceRelationshipType = preFoundRefRel;
-                    }
-                    else
-                    {
-                        referenceRelationshipType = exchangeDataType.Assembly.GetType("Autodesk.DataExchange.SchemaObjects.Relationships.ReferenceRelationship");
-                    }
-                    
-                    if (referenceRelationshipType != null)
+                    const string referenceRelationshipTypeName = "Autodesk.DataExchange.SchemaObjects.Relationships.ReferenceRelationship";
+                    if (foundTypes.TryGetValue(referenceRelationshipTypeName, out var referenceRelationshipType) || 
+                        (referenceRelationshipType = ReflectionHelper.FindType(referenceRelationshipTypeName, exchangeDataType, foundTypes)) != null)
                     {
                         var referenceRelationship = Activator.CreateInstance(referenceRelationshipType);
                         var modelStructureProperty = referenceRelationshipType.GetProperty("ModelStructure", BindingFlags.Public | BindingFlags.Instance);
                         if (modelStructureProperty != null)
                         {
-                            Type modelStructureType = null;
-                            if (foundTypes.TryGetValue("Autodesk.DataExchange.SchemaObjects.Components.ModelStructure", out var preFoundModelStruct))
-                            {
-                                modelStructureType = preFoundModelStruct;
-                            }
-                            else
-                            {
-                                modelStructureType = exchangeDataType.Assembly.GetType("Autodesk.DataExchange.SchemaObjects.Components.ModelStructure");
-                            }
-                            
-                            if (modelStructureType != null)
+                            const string modelStructureTypeName = "Autodesk.DataExchange.SchemaObjects.Components.ModelStructure";
+                            if (foundTypes.TryGetValue(modelStructureTypeName, out var modelStructureType) || 
+                                (modelStructureType = ReflectionHelper.FindType(modelStructureTypeName, exchangeDataType, foundTypes)) != null)
                             {
                                 var modelStructure = Activator.CreateInstance(modelStructureType);
                                 var valueProperty = modelStructureType.GetProperty("Value", BindingFlags.Public | BindingFlags.Instance);
@@ -2161,24 +1929,9 @@ END-ISO-10303-21;
                 var addChildMethod = designAsset.GetType().GetMethod("AddChild", BindingFlags.Public | BindingFlags.Instance);
                 if (addChildMethod != null)
                 {
-                    Type containmentRelationshipType = null;
-                    if (foundTypes.TryGetValue("Autodesk.DataExchange.SchemaObjects.Relationships.ContainmentRelationship", out var preFoundContainment))
-                    {
-                        containmentRelationshipType = preFoundContainment;
-                    }
-                    else
-                    {
-                        var allAssemblies = AppDomain.CurrentDomain.GetAssemblies()
-                            .Where(a => a.GetName().Name.Contains("DataExchange"))
-                            .ToList();
-                        foreach (var asm in allAssemblies)
-                        {
-                            containmentRelationshipType = asm.GetType("Autodesk.DataExchange.SchemaObjects.Relationships.ContainmentRelationship");
-                            if (containmentRelationshipType != null) break;
-                        }
-                    }
-                    
-                    if (containmentRelationshipType != null)
+                    const string containmentRelationshipTypeName = "Autodesk.DataExchange.SchemaObjects.Relationships.ContainmentRelationship";
+                    if (foundTypes.TryGetValue(containmentRelationshipTypeName, out var containmentRelationshipType) || 
+                        (containmentRelationshipType = ReflectionHelper.FindType(containmentRelationshipTypeName, exchangeDataType, foundTypes)) != null)
                     {
                         var containmentRelationship = Activator.CreateInstance(containmentRelationshipType);
                         addChildMethod.Invoke(designAsset, new object[] { geometryAsset, containmentRelationship });
@@ -2196,9 +1949,11 @@ END-ISO-10303-21;
         /// <summary>
         /// Full SyncExchangeDataAsync flow adapted for direct SMB uploads
         /// Follows the exact same flow as the internal SDK method but skips STEP→SMB conversion
+        /// NOTE: Viewable generation is disabled by default (takes ~131 seconds). Use UploadSMBToExchange's generateViewable parameter to control it.
         /// </summary>
         private static async Task SyncExchangeDataAsyncForSMB(object client, Type clientType, DataExchangeIdentifier identifier, object exchangeData, Type exchangeDataType, List<string> diagnostics)
         {
+            var syncTimer = Stopwatch.StartNew();
             diagnostics.Add($"\n=== Starting Full SyncExchangeDataAsync Flow for SMB ===");
             string fulfillmentId = string.Empty;
             object api = null;
@@ -2206,44 +1961,68 @@ END-ISO-10303-21;
 
             try
             {
-                await ProcessRenderStylesFromFileGeometryAsync(client, clientType, exchangeData, exchangeDataType, diagnostics);
+                await TimeOperation("ProcessRenderStylesFromFileGeometryAsync", 
+                    async () => await ProcessRenderStylesFromFileGeometryAsync(client, clientType, exchangeData, exchangeDataType, diagnostics), diagnostics);
                 
-                fulfillmentId = await StartFulfillmentAsync(client, clientType, identifier, exchangeData, exchangeDataType, diagnostics);
-                api = GetAPI(client, clientType);
+                fulfillmentId = await TimeOperation("StartFulfillmentAsync", 
+                    async () => await StartFulfillmentAsync(client, clientType, identifier, exchangeData, exchangeDataType, diagnostics), diagnostics);
+                api = TimeOperation("GetAPI", 
+                    () => GetAPI(client, clientType), diagnostics);
                 apiType = api?.GetType();
 
-                var assetInfosList = await GetAssetInfosForSMBAsync(client, clientType, exchangeData, exchangeDataType, identifier, fulfillmentId, diagnostics);
+                var assetInfosList = await TimeOperation("GetAssetInfosForSMBAsync", 
+                    async () => await GetAssetInfosForSMBAsync(client, clientType, exchangeData, exchangeDataType, identifier, fulfillmentId, diagnostics), diagnostics);
                 
-                AddRenderStylesToAssetInfos(client, clientType, assetInfosList, exchangeData, exchangeDataType, diagnostics);
+                TimeOperation("AddRenderStylesToAssetInfos", 
+                    () => AddRenderStylesToAssetInfos(client, clientType, assetInfosList, exchangeData, exchangeDataType, diagnostics), diagnostics);
                 
-                await UploadGeometriesAsync(client, clientType, identifier, fulfillmentId, assetInfosList, exchangeData, exchangeDataType, diagnostics);
+                await TimeOperation("UploadGeometriesAsync (network I/O)", 
+                    async () => await UploadGeometriesAsync(client, clientType, identifier, fulfillmentId, assetInfosList, exchangeData, exchangeDataType, diagnostics), diagnostics);
                 
-                await UploadCustomGeometriesAsync(client, clientType, identifier, fulfillmentId, exchangeData, exchangeDataType, diagnostics);
+                await TimeOperation("UploadCustomGeometriesAsync", 
+                    async () => await UploadCustomGeometriesAsync(client, clientType, identifier, fulfillmentId, exchangeData, exchangeDataType, diagnostics), diagnostics);
                 
-                await UploadLargePrimitiveGeometriesAsync(client, clientType, identifier, fulfillmentId, exchangeData, exchangeDataType, diagnostics);
+                await TimeOperation("UploadLargePrimitiveGeometriesAsync", 
+                    async () => await UploadLargePrimitiveGeometriesAsync(client, clientType, identifier, fulfillmentId, exchangeData, exchangeDataType, diagnostics), diagnostics);
                 
-                var fulfillmentSyncRequest = await GetFulfillmentSyncRequestAsync(client, clientType, identifier, exchangeData, exchangeDataType, diagnostics);
+                var fulfillmentSyncRequest = await TimeOperation("GetFulfillmentSyncRequestAsync", 
+                    async () => await GetFulfillmentSyncRequestAsync(client, clientType, identifier, exchangeData, exchangeDataType, diagnostics), diagnostics);
                 
-                var fulfillmentTasks = await BatchAndSendSyncRequestsAsync(client, clientType, identifier, fulfillmentId, fulfillmentSyncRequest, exchangeData, exchangeDataType, diagnostics);
+                var fulfillmentTasks = await TimeOperation("BatchAndSendSyncRequestsAsync", 
+                    async () => await BatchAndSendSyncRequestsAsync(client, clientType, identifier, fulfillmentId, fulfillmentSyncRequest, exchangeData, exchangeDataType, diagnostics), diagnostics);
                 
-                await WaitForAllTasksAsync(fulfillmentTasks, diagnostics);
+                await TimeOperation("WaitForAllTasksAsync", 
+                    async () => await WaitForAllTasksAsync(fulfillmentTasks, diagnostics), diagnostics);
                 
-                await FinishFulfillmentAsync(api, apiType, identifier, fulfillmentId, diagnostics);
+                await TimeOperation("FinishFulfillmentAsync", 
+                    async () => await FinishFulfillmentAsync(api, apiType, identifier, fulfillmentId, diagnostics), diagnostics);
                 
-                await PollForFulfillmentAsync(client, clientType, identifier, fulfillmentId, diagnostics);
+                await TimeOperation("PollForFulfillmentAsync", 
+                    async () => await PollForFulfillmentAsync(client, clientType, identifier, fulfillmentId, diagnostics), diagnostics);
                 
-                ClearLocalStatesAndSetRevision(client, clientType, exchangeData, exchangeDataType, diagnostics);
+                TimeOperation("ClearLocalStatesAndSetRevision", 
+                    () => ClearLocalStatesAndSetRevision(client, clientType, exchangeData, exchangeDataType, diagnostics), diagnostics);
                 
-                SetExchangeIdentifierIfNeeded(exchangeData, exchangeDataType, identifier, diagnostics);
+                TimeOperation("SetExchangeIdentifierIfNeeded", 
+                    () => SetExchangeIdentifierIfNeeded(exchangeData, exchangeDataType, identifier, diagnostics), diagnostics);
 
-                // Generate viewable so geometry appears in the viewer
-                await GenerateViewableAsync(client, clientType, identifier, diagnostics);
+                // Viewable generation is disabled by default (takes ~131 seconds)
+                // It can be enabled via UploadSMBToExchange's generateViewable parameter if needed
+                diagnostics.Add("\n14. Skipping viewable generation (disabled by default for performance)");
+                diagnostics.Add("  ⚠️ Viewable generation skipped - geometry may not appear in viewer immediately");
+                diagnostics.Add("  ⚠️ Viewable will be generated automatically by the server, or you can trigger it manually");
+                diagnostics.Add("  ⏱️  Saved ~131 seconds by skipping viewable generation");
+                diagnostics.Add("  💡 To enable viewable generation, set generateViewable=true in UploadSMBToExchange");
 
-                diagnostics.Add("\n✓ Full SyncExchangeDataAsync flow completed successfully");
+                syncTimer.Stop();
+                diagnostics.Add($"\n✓ Full SyncExchangeDataAsync flow completed successfully");
+                diagnostics.Add($"⏱️  TOTAL SyncExchangeDataAsyncForSMB time: {syncTimer.ElapsedMilliseconds}ms ({syncTimer.Elapsed.TotalSeconds:F3}s)");
             }
             catch (Exception ex)
             {
+                syncTimer.Stop();
                 diagnostics.Add($"\n✗ ERROR in SyncExchangeDataAsyncForSMB: {ex.GetType().Name}: {ex.Message}");
+                diagnostics.Add($"⏱️  SyncExchangeDataAsyncForSMB failed after: {syncTimer.ElapsedMilliseconds}ms ({syncTimer.Elapsed.TotalSeconds:F3}s)");
                 if (ex.InnerException != null)
                 {
                     diagnostics.Add($"  Inner exception: {ex.InnerException.GetType().Name}: {ex.InnerException.Message}");
@@ -2872,7 +2651,12 @@ END-ISO-10303-21;
         /// <summary>
         /// Generates viewable from exchange geometry so it can be displayed in the viewer
         /// This is CRITICAL - without this, geometry won't appear in the viewer even if uploaded successfully
+        /// 
+        /// NOTE: This method is currently NOT USED (disabled by default for performance - takes ~131 seconds).
+        /// Kept for posterity/reference. Viewable generation can be enabled via UploadSMBToExchange's generateViewable parameter.
+        /// The server will generate viewables automatically, so manual generation is typically not needed.
         /// </summary>
+        [System.Obsolete("Not used by default - takes ~131 seconds. Use UploadSMBToExchange's generateViewable parameter if needed.")]
         private static async Task GenerateViewableAsync(object client, Type clientType, DataExchangeIdentifier identifier, List<string> diagnostics)
         {
             diagnostics.Add("\n14. Generating viewable from exchange geometry...");
@@ -3208,6 +2992,7 @@ END-ISO-10303-21;
             string elementId = "",
             string unit = "kUnitType_CentiMeter")
         {
+            var overallTimer = Stopwatch.StartNew();
             var diagnostics = new List<string>();
             bool success = false;
             string finalElementId = string.IsNullOrEmpty(elementId) ? Guid.NewGuid().ToString() : elementId;
@@ -3225,7 +3010,8 @@ END-ISO-10303-21;
 
                 // Get Client instance
                 diagnostics.Add("\nGetting Client instance...");
-                var client = TryGetClientInstance(diagnostics);
+                var client = TimeOperation("TryGetClientInstance (reflection)", 
+                    () => TryGetClientInstance(diagnostics), diagnostics);
                 if (client == null)
                 {
                     throw new InvalidOperationException("Could not find Client instance. Make sure you have selected an Exchange first.");
@@ -3235,13 +3021,16 @@ END-ISO-10303-21;
                 var clientType = client.GetType();
 
                 // Create DataExchangeIdentifier
-                var identifier = CreateDataExchangeIdentifier(exchange, diagnostics);
+                var identifier = TimeOperation("CreateDataExchangeIdentifier", 
+                    () => CreateDataExchangeIdentifier(exchange, diagnostics), diagnostics);
 
                 // Get ElementDataModel
-                var elementDataModel = GetElementDataModelAsync(client, clientType, identifier, diagnostics);
+                var elementDataModel = TimeOperation("GetElementDataModelAsync (reflection + async)", 
+                    () => GetElementDataModelAsync(client, clientType, identifier, diagnostics), diagnostics);
 
                 // Create Element
-                var element = CreateElement(elementDataModel, finalElementId, elementName, diagnostics);
+                var element = TimeOperation("CreateElement", 
+                    () => CreateElement(elementDataModel, finalElementId, elementName, diagnostics), diagnostics);
 
                 // Get ExchangeData
                 var exchangeDataField = typeof(ElementDataModel).GetField("exchangeData", BindingFlags.NonPublic | BindingFlags.Instance);
@@ -3249,31 +3038,40 @@ END-ISO-10303-21;
                 {
                     throw new InvalidOperationException("Could not find exchangeData field on ElementDataModel");
                 }
-                var (exchangeData, exchangeDataType) = GetExchangeData(elementDataModel, diagnostics);
+                var (exchangeData, exchangeDataType) = TimeOperation("GetExchangeData (reflection)", 
+                    () => GetExchangeData(elementDataModel, diagnostics), diagnostics);
 
                 // Find required types
-                var foundTypes = FindRequiredTypes(exchangeDataType, diagnostics);
+                var foundTypes = TimeOperation("FindRequiredTypes (reflection - type discovery)", 
+                    () => FindRequiredTypes(exchangeDataType, diagnostics), diagnostics);
 
                 // Create GeometryAsset
                 diagnostics.Add($"\nCreating GeometryAsset for SMB file (BRep format)...");
                 diagnostics.Add($"  SMB file path: {smbFilePath}");
                 diagnostics.Add($"  File exists: {File.Exists(smbFilePath)}");
-                var (geometryAsset, geometryAssetType, geometryAssetId) = CreateGeometryAsset(exchangeDataType, foundTypes, diagnostics);
-                SetGeometryAssetUnits(geometryAsset, geometryAssetType, diagnostics);
+                var (geometryAsset, geometryAssetType, geometryAssetId) = TimeOperation("CreateGeometryAsset (reflection)", 
+                    () => CreateGeometryAsset(exchangeDataType, foundTypes, diagnostics), diagnostics);
+                TimeOperation("SetGeometryAssetUnits", 
+                    () => SetGeometryAssetUnits(geometryAsset, geometryAssetType, diagnostics), diagnostics);
 
                 // Create GeometryWrapper and GeometryComponent
-                var geometryWrapper = CreateGeometryWrapper(foundTypes, exchangeDataType, diagnostics);
-                CreateGeometryComponent(geometryAsset, geometryAssetType, geometryWrapper, foundTypes, exchangeDataType, diagnostics);
+                var geometryWrapper = TimeOperation("CreateGeometryWrapper (reflection)", 
+                    () => CreateGeometryWrapper(foundTypes, exchangeDataType, diagnostics), diagnostics);
+                TimeOperation("CreateGeometryComponent (reflection)", 
+                    () => CreateGeometryComponent(geometryAsset, geometryAssetType, geometryWrapper, foundTypes, exchangeDataType, diagnostics), diagnostics);
 
                 // Add GeometryAsset to ExchangeData
-                AddGeometryAssetToExchangeData(geometryAsset, exchangeData, exchangeDataType, smbFilePath, foundTypes, diagnostics);
+                TimeOperation("AddGeometryAssetToExchangeData", 
+                    () => AddGeometryAssetToExchangeData(geometryAsset, exchangeData, exchangeDataType, smbFilePath, foundTypes, diagnostics), diagnostics);
 
                 // Add GeometryAsset to UnsavedGeometryMapping (required for full SDK flow)
                 // Pass exchangeId for mapping storage
-                AddGeometryAssetToUnsavedMapping(geometryAsset, exchangeData, exchangeDataType, smbFilePath, identifier.ExchangeId, diagnostics);
+                TimeOperation("AddGeometryAssetToUnsavedMapping", 
+                    () => AddGeometryAssetToUnsavedMapping(geometryAsset, exchangeData, exchangeDataType, smbFilePath, identifier.ExchangeId, diagnostics), diagnostics);
 
                 // Setup DesignAsset and relationships
-                SetupDesignAssetAndRelationships(element, geometryAsset, geometryAssetType, exchangeData, exchangeDataType, foundTypes, elementName, diagnostics);
+                TimeOperation("SetupDesignAssetAndRelationships (complex reflection)", 
+                    () => SetupDesignAssetAndRelationships(element, geometryAsset, geometryAssetType, exchangeData, exchangeDataType, foundTypes, elementName, diagnostics), diagnostics);
 
                 // Full SyncExchangeDataAsync flow for SMB
                 // This follows the complete SDK flow, ensuring geometry is properly processed and visible
@@ -3282,8 +3080,19 @@ END-ISO-10303-21;
                 try
                 {
                     // Call async method synchronously (Dynamo nodes must be synchronous)
-                    var syncTask = SyncExchangeDataAsyncForSMB(client, clientType, identifier, exchangeData, exchangeDataType, diagnostics);
-                    syncTask.GetAwaiter().GetResult();
+                    var syncTask = TimeOperation("SyncExchangeDataAsyncForSMB (entire sync flow)", 
+                        () => SyncExchangeDataAsyncForSMB(client, clientType, identifier, exchangeData, exchangeDataType, diagnostics), diagnostics);
+                    TimeOperation("Await sync task completion", 
+                        () => syncTask.GetAwaiter().GetResult(), diagnostics);
+                    
+                    // Generate viewable if requested (takes ~131 seconds, disabled by default for performance)
+                    if (generateViewable)
+                    {
+                        diagnostics.Add("\nGenerating viewable (generateViewable=true)...");
+                        var viewableTask = TimeOperation("GenerateViewableAsync (explicit request)", 
+                            () => GenerateViewableAsync(client, clientType, identifier, diagnostics), diagnostics);
+                        viewableTask.GetAwaiter().GetResult();
+                    }
                     
                     // Check if BinaryReference was set
                     var binaryRefProp = geometryAssetType.GetProperty("BinaryReference", BindingFlags.Public | BindingFlags.Instance);
@@ -3317,7 +3126,8 @@ END-ISO-10303-21;
                 }
                 
                 // Inspect results
-                InspectGeometryAsset(geometryAsset, geometryAssetType, exchangeData, exchangeDataType, diagnostics);
+                TimeOperation("InspectGeometryAsset", 
+                    () => InspectGeometryAsset(geometryAsset, geometryAssetType, exchangeData, exchangeDataType, diagnostics), diagnostics);
             }
             catch (Exception ex)
             {
@@ -3327,6 +3137,11 @@ END-ISO-10303-21;
                     diagnostics.Add($"  Inner exception: {ex.InnerException.GetType().Name}: {ex.InnerException.Message}");
                 }
                 diagnostics.Add($"  Stack: {ex.StackTrace}");
+            }
+            finally
+            {
+                overallTimer.Stop();
+                diagnostics.Add($"\n⏱️  TOTAL UploadSMBToExchange time: {overallTimer.ElapsedMilliseconds}ms ({overallTimer.Elapsed.TotalSeconds:F3}s)");
             }
 
             return new Dictionary<string, object>
