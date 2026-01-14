@@ -390,9 +390,45 @@ namespace DataExchangeNodes.DataExchange
                     geometryCount = 1; // Assume 1 if we can't determine
                 }
 
+                // Pre-sync diagnostics: check geometries per element
+                diagnostics.Add($"\n=== Geometry summary before sync ===");
+                try
+                {
+                    var allElements = elementDataModel.Elements?.ToList() ?? new List<Autodesk.DataExchange.DataModels.Element>();
+                    var allGeometries = elementDataModel.GetElementGeometriesAsync(allElements, CancellationToken.None, null).Result;
+                    if (allGeometries != null)
+                    {
+                        foreach (var kvp in allGeometries)
+                        {
+                            var elemName = kvp.Key?.Name ?? "Unknown";
+                            var count = kvp.Value?.Count() ?? 0;
+                            diagnostics.Add($"  Element '{elemName}': {count} geometry/geometries");
+                            foreach (var geom in kvp.Value ?? Enumerable.Empty<ElementGeometry>())
+                            {
+                                var geomType = geom?.GetType().FullName ?? "null";
+                                var filePathProp = geom?.GetType().GetProperty("FilePath", BindingFlags.Public | BindingFlags.Instance);
+                                var filePath = filePathProp?.GetValue(geom)?.ToString();
+                                if (!string.IsNullOrEmpty(filePath))
+                                {
+                                    diagnostics.Add($"    - {geomType} (FilePath: {filePath})");
+                                }
+                                else
+                                {
+                                    diagnostics.Add($"    - {geomType}");
+                                }
+                            }
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    diagnostics.Add($"  ⚠️ Could not read pre-sync geometries: {ex.GetType().Name}: {ex.Message}");
+                }
+
                 // Sync exchange data (this will upload the geometry)
                 // SyncExchangeDataAsync accepts ElementDataModel directly
                 diagnostics.Add($"Starting SyncExchangeDataAsync to upload geometry...");
+                diagnostics.Add($"  Uploading {geometries.Count} geometry/geometries to element '{elementName}'");
                 stopwatch.Restart();
                 
                 var syncTask = iClient.SyncExchangeDataAsync(identifier, elementDataModel, CancellationToken.None);
@@ -401,6 +437,45 @@ namespace DataExchangeNodes.DataExchange
                 stopwatch.Stop();
                 diagnostics.Add($"✓ SyncExchangeDataAsync completed");
                 diagnostics.Add($"⏱️ SyncExchangeDataAsync: {stopwatch.ElapsedMilliseconds}ms ({stopwatch.Elapsed.TotalSeconds:F3}s)");
+                
+                // CRITICAL: Verify geometries are still present after sync
+                diagnostics.Add($"\n=== Verifying geometries after sync ===");
+                try
+                {
+                    var verifyElementsList = new List<Autodesk.DataExchange.DataModels.Element> { element };
+                    var verifyGeometriesDict = elementDataModel.GetElementGeometriesAsync(verifyElementsList, CancellationToken.None, null).Result;
+                    if (verifyGeometriesDict != null && verifyGeometriesDict.ContainsKey(element))
+                    {
+                        var verifyGeometries = verifyGeometriesDict[element];
+                        var verifyGeometriesList = verifyGeometries?.ToList() ?? new List<ElementGeometry>();
+                        var verifyCount = verifyGeometriesList.Count;
+                        
+                        diagnostics.Add($"  Geometries before sync: {geometries.Count}");
+                        diagnostics.Add($"  Geometries after sync: {verifyCount}");
+                        
+                        if (verifyCount == geometries.Count)
+                        {
+                            diagnostics.Add($"  ✓ SUCCESS: All {verifyCount} geometries preserved after sync");
+                        }
+                        else if (verifyCount < geometries.Count)
+                        {
+                            diagnostics.Add($"  ✗ WARNING: Lost {geometries.Count - verifyCount} geometry/geometries during sync!");
+                            diagnostics.Add($"    Expected: {geometries.Count}, Got: {verifyCount}");
+                        }
+                        else
+                        {
+                            diagnostics.Add($"  ⚠️ UNEXPECTED: More geometries after sync ({verifyCount}) than before ({geometries.Count})");
+                        }
+                    }
+                    else
+                    {
+                        diagnostics.Add($"  ⚠️ Could not verify geometries after sync");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    diagnostics.Add($"  ⚠️ Could not verify geometries after sync: {ex.GetType().Name}: {ex.Message}");
+                }
                 
                 // Try to get exchange details to check version/revision
                 try
