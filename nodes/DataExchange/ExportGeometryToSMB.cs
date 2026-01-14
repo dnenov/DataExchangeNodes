@@ -1700,6 +1700,11 @@ END-ISO-10303-21;
                                         
                                         if (bodyInfoType != null && bodyTypeEnum != null)
                                         {
+                                            // DIAGNOSTIC: Inspect BodyInfo properties
+                                            var bodyInfoProps = bodyInfoType.GetProperties(BindingFlags.Public | BindingFlags.Instance);
+                                            var propNames = string.Join(", ", bodyInfoProps.Select(p => $"{p.Name} ({p.PropertyType.Name})"));
+                                            diagnostics.Add($"  BodyInfo properties available: {propNames}");
+                                            
                                             // Determine how many BodyInfo objects to create
                                             int geometryCount = 1; // Default to 1
                                             if (geometryAssetIdToGeometryCount != null && geometryAssetIdToGeometryCount.TryGetValue(assetInfoId, out var count))
@@ -1725,20 +1730,72 @@ END-ISO-10303-21;
                                                     brepValue = enumValues.GetValue(enumValues.Length > 1 ? 1 : 0);
                                                 }
                                                 
+                                                // Get BodyId property (if it exists)
+                                                var bodyIdProp = bodyInfoType.GetProperty("BodyId", BindingFlags.Public | BindingFlags.Instance);
+                                                
                                                 // Create one BodyInfo per geometry
                                                 for (int i = 0; i < geometryCount; i++)
                                                 {
                                                     var bodyInfo = Activator.CreateInstance(bodyInfoType);
+                                                    
+                                                    // Set Type property
                                                     var typeProp = bodyInfoType.GetProperty("Type");
                                                     if (typeProp != null)
                                                     {
                                                         typeProp.SetValue(bodyInfo, brepValue);
-                                                        addMethod.Invoke(bodyInfoList, new object[] { bodyInfo });
+                                                        diagnostics.Add($"    BodyInfo {i}: Type = {brepValue}");
                                                     }
+                                                    
+                                                    // Set BodyId property to distinguish each geometry
+                                                    // Using index-based ID: geometry_0, geometry_1, geometry_2, etc.
+                                                    if (bodyIdProp != null)
+                                                    {
+                                                        var bodyId = $"geometry_{i}";
+                                                        bodyIdProp.SetValue(bodyInfo, bodyId);
+                                                        diagnostics.Add($"    BodyInfo {i}: BodyId = {bodyId}");
+                                                    }
+                                                    else
+                                                    {
+                                                        diagnostics.Add($"    BodyInfo {i}: BodyId property not found");
+                                                    }
+                                                    
+                                                    addMethod.Invoke(bodyInfoList, new object[] { bodyInfo });
                                                 }
                                                 
                                                 bodyInfoListProp.SetValue(assetInfo, bodyInfoList);
-                                                diagnostics.Add($"  ✓ Set BodyInfoList with {geometryCount} BodyInfo object(s) (BRep type) on AssetInfo");
+                                                
+                                                // DIAGNOSTIC: Verify BodyInfoList was set correctly
+                                                var verifyBodyInfoList = bodyInfoListProp.GetValue(assetInfo);
+                                                if (verifyBodyInfoList != null)
+                                                {
+                                                    var countProp = verifyBodyInfoList.GetType().GetProperty("Count");
+                                                    if (countProp != null)
+                                                    {
+                                                        var actualCount = countProp.GetValue(verifyBodyInfoList);
+                                                        diagnostics.Add($"  ✓ Set BodyInfoList with {actualCount} BodyInfo object(s) (BRep type) on AssetInfo");
+                                                        
+                                                        // DIAGNOSTIC: Log each BodyInfo in the list
+                                                        var enumerable = verifyBodyInfoList as System.Collections.IEnumerable;
+                                                        if (enumerable != null)
+                                                        {
+                                                            int idx = 0;
+                                                            foreach (var bi in enumerable)
+                                                            {
+                                                                var biType = bi.GetType();
+                                                                var biTypeProp = biType.GetProperty("Type");
+                                                                var biIdProp = biType.GetProperty("BodyId");
+                                                                var biTypeVal = biTypeProp?.GetValue(bi);
+                                                                var biIdVal = biIdProp?.GetValue(bi);
+                                                                diagnostics.Add($"    Verified BodyInfo[{idx}]: Type={biTypeVal}, BodyId={biIdVal}");
+                                                                idx++;
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                                else
+                                                {
+                                                    diagnostics.Add($"  ⚠️ BodyInfoList is null after setting!");
+                                                }
                                             }
                                         }
                                     }
@@ -2793,6 +2850,28 @@ END-ISO-10303-21;
         private static async Task UploadGeometriesAsync(object client, Type clientType, DataExchangeIdentifier identifier, string fulfillmentId, List<object> assetInfosList, object exchangeData, Type exchangeDataType, List<string> diagnostics)
         {
             diagnostics.Add("\n5. Uploading geometries...");
+            
+            // DIAGNOSTIC: Inspect AssetInfos before upload
+            foreach (var assetInfo in assetInfosList)
+            {
+                var idProp = assetInfo.GetType().GetProperty("Id", BindingFlags.Public | BindingFlags.Instance);
+                var assetInfoId = idProp?.GetValue(assetInfo)?.ToString();
+                var bodyInfoListProp = assetInfo.GetType().GetProperty("BodyInfoList", BindingFlags.Public | BindingFlags.Instance);
+                if (bodyInfoListProp != null)
+                {
+                    var bodyInfoList = bodyInfoListProp.GetValue(assetInfo);
+                    if (bodyInfoList != null)
+                    {
+                        var countProp = bodyInfoList.GetType().GetProperty("Count");
+                        var count = countProp?.GetValue(bodyInfoList);
+                        diagnostics.Add($"  AssetInfo {assetInfoId}: BodyInfoList.Count = {count}");
+                    }
+                }
+                var outputPathProp = assetInfo.GetType().GetProperty("OutputPath", BindingFlags.Public | BindingFlags.Instance);
+                var outputPath = outputPathProp?.GetValue(assetInfo)?.ToString();
+                diagnostics.Add($"  AssetInfo {assetInfoId}: OutputPath = {outputPath}");
+            }
+            
             if (assetInfosList.Count > 0)
             {
                 var assetInfoType = assetInfosList[0].GetType();
@@ -2834,6 +2913,24 @@ END-ISO-10303-21;
                         {
                             await ((dynamic)uploadTask).ConfigureAwait(false);
                             diagnostics.Add("  ✓ Uploaded geometries");
+                            
+                            // DIAGNOSTIC: Check BodyInfoList after upload
+                            foreach (var assetInfo in assetInfosList)
+                            {
+                                var idProp = assetInfo.GetType().GetProperty("Id", BindingFlags.Public | BindingFlags.Instance);
+                                var assetInfoId = idProp?.GetValue(assetInfo)?.ToString();
+                                var bodyInfoListProp = assetInfo.GetType().GetProperty("BodyInfoList", BindingFlags.Public | BindingFlags.Instance);
+                                if (bodyInfoListProp != null)
+                                {
+                                    var bodyInfoList = bodyInfoListProp.GetValue(assetInfo);
+                                    if (bodyInfoList != null)
+                                    {
+                                        var countProp = bodyInfoList.GetType().GetProperty("Count");
+                                        var count = countProp?.GetValue(bodyInfoList);
+                                        diagnostics.Add($"  After upload - AssetInfo {assetInfoId}: BodyInfoList.Count = {count}");
+                                    }
+                                }
+                            }
                         }
                     }
                     catch (Exception ex)
@@ -3605,14 +3702,15 @@ END-ISO-10303-21;
                 }
 
                 // The SDK architecture requires one GeometryAsset per geometry
-                // If the SMB file contains multiple geometries, we need to split them into separate SMB files
-                // Each geometry gets its own SMB file and GeometryAsset
+                // Multiple BodyInfo objects in one AssetInfo don't work - the SDK extracts geometries from the SMB file
+                // based on the file format, not BodyInfo count. So we need to split into separate SMB files.
                 var smbFilesToUpload = new List<string>();
                 
                 if (geometryCount > 1)
                 {
                     diagnostics.Add($"  SMB file contains {geometryCount} geometries - splitting into separate SMB files...");
                     diagnostics.Add($"  (SDK requires one GeometryAsset per geometry, each with its own SMB file)");
+                    diagnostics.Add($"  Note: Multiple BodyInfo objects in one AssetInfo don't work - SDK extracts based on file format");
                     
                     var tempDir = Path.Combine(Path.GetTempPath(), "DataExchangeNodes", "SplitGeometries");
                     if (!Directory.Exists(tempDir))
