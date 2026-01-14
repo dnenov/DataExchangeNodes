@@ -569,15 +569,23 @@ namespace DataExchangeNodes.DataExchange
 
                 diagnostics.Add($"✓ Authenticated (token length: {accessToken.Length} chars)");
 
-                // Download SMB file from DataExchange
+                // Download ALL SMB files from DataExchange (there may be multiple GeometryAssets)
                 // Note: Using .Result blocks the thread, but Dynamo ZeroTouch nodes are synchronous
                 // This is acceptable for now as Dynamo will handle the blocking appropriately
-                var smbFilePath = DownloadSMBFile(exchange, accessToken, diagnostics).GetAwaiter().GetResult();
-                diagnostics.Add($"✓ Downloaded SMB file: {smbFilePath}");
+                var smbFilePaths = DownloadAllSMBFiles(exchange, accessToken, diagnostics).GetAwaiter().GetResult();
+                diagnostics.Add($"✓ Downloaded {smbFilePaths.Count} SMB file(s)");
 
-                // Load geometry using ProtoGeometry SMB APIs
-                geometries = LoadGeometryFromSMB(smbFilePath, unit, diagnostics);
-                diagnostics.Add($"✓ Loaded {geometries.Count} geometry object(s)");
+                // Load geometry from ALL SMB files using ProtoGeometry SMB APIs
+                foreach (var smbFilePath in smbFilePaths)
+                {
+                    if (!string.IsNullOrEmpty(smbFilePath) && File.Exists(smbFilePath))
+                    {
+                        var geometriesFromFile = LoadGeometryFromSMB(smbFilePath, unit, diagnostics);
+                        geometries.AddRange(geometriesFromFile);
+                        diagnostics.Add($"✓ Loaded {geometriesFromFile.Count} geometry object(s) from {Path.GetFileName(smbFilePath)}");
+                    }
+                }
+                diagnostics.Add($"✓ Total loaded: {geometries.Count} geometry object(s) from {smbFilePaths.Count} SMB file(s)");
 
                 success = geometries.Count > 0;
                 diagnostics.Add($"\n=== Load Completed: {geometries.Count} geometries ===");
@@ -603,67 +611,63 @@ namespace DataExchangeNodes.DataExchange
         }
 
         /// <summary>
-        /// Downloads SMB file from DataExchange API
+        /// Downloads ALL SMB files from DataExchange API (one per GeometryAsset)
         /// First tries to use internal Client SDK methods via reflection, then falls back to HTTP API
         /// </summary>
-        private static async Task<string> DownloadSMBFile(
+        private static async Task<List<string>> DownloadAllSMBFiles(
             Exchange exchange,
             string accessToken,
             List<string> diagnostics)
         {
+            var smbFilePaths = new List<string>();
+            
             try
             {
-                // Create temp directory for SMB file
+                // Create temp directory for SMB files
                 var tempDir = Path.Combine(Path.GetTempPath(), "DataExchangeNodes");
                 if (!Directory.Exists(tempDir))
                     Directory.CreateDirectory(tempDir);
 
-                var smbFilePath = Path.Combine(tempDir, $"Exchange_{exchange.ExchangeId}_{exchange.CollectionId}.smb");
-
                 // First, try to use the DataExchange Client SDK via reflection to access internal/private methods
-                diagnostics.Add("  Attempting to use DataExchange Client SDK (reflection)...");
-                var clientDownloadResult = await TryDownloadSMBViaClientReflection(exchange, smbFilePath, diagnostics);
+                diagnostics.Add("  Attempting to use DataExchange Client SDK (reflection) to download ALL GeometryAssets...");
+                var clientDownloadResult = await TryDownloadAllSMBViaClientReflection(exchange, tempDir, diagnostics);
                 
-                if (clientDownloadResult)
+                if (clientDownloadResult != null && clientDownloadResult.Count > 0)
                 {
-                    if (File.Exists(smbFilePath))
+                    smbFilePaths.AddRange(clientDownloadResult);
+                    diagnostics.Add($"  ✓ Downloaded {smbFilePaths.Count} SMB file(s) via Client SDK");
+                    foreach (var path in smbFilePaths)
                     {
-                        diagnostics.Add($"  ✓ Downloaded via Client SDK: {new FileInfo(smbFilePath).Length} bytes");
-                        return smbFilePath;
-                    }
-                    else
-                    {
-                        diagnostics.Add($"  ⚠️ Client SDK reported success but file not found: {smbFilePath}");
+                        if (File.Exists(path))
+                        {
+                            diagnostics.Add($"    - {Path.GetFileName(path)}: {new FileInfo(path).Length} bytes");
+                        }
                     }
                 }
 
-                // Fallback to HTTP API if Client SDK method not found or failed
-                // NOTE: HTTP API fallback is disabled as it doesn't work - need to fix GetBinaryAssetDownloadInfoAsync instead
-                //diagnostics.Add("  Falling back to HTTP API download...");
-                //await DownloadSMBViaHttpAPI(exchange, accessToken, smbFilePath, diagnostics);
-                
-                // Verify file was actually downloaded
-                if (!File.Exists(smbFilePath))
+                // Verify at least one file was downloaded
+                if (smbFilePaths.Count == 0 || !smbFilePaths.Any(File.Exists))
                 {
-                    throw new IOException($"SMB file was not downloaded via Client SDK. GetBinaryAssetDownloadInfoAsync needs proper BinaryDownloadBatchRequest structure.");
+                    throw new IOException($"No SMB files were downloaded via Client SDK. Check that GeometryAssets exist in the exchange.");
                 }
                 
-                return smbFilePath;
+                return smbFilePaths.Where(File.Exists).ToList();
             }
             catch (Exception ex)
             {
-                diagnostics.Add($"✗ Failed to download SMB file: {ex.Message}");
-                throw new IOException($"Failed to download SMB file from DataExchange: {ex.Message}", ex);
+                diagnostics.Add($"✗ Failed to download SMB files: {ex.Message}");
+                throw new IOException($"Failed to download SMB files from DataExchange: {ex.Message}", ex);
             }
         }
 
         /// <summary>
-        /// Attempts to download SMB file using DataExchange Client SDK via reflection
+        /// Attempts to download ALL SMB files using DataExchange Client SDK via reflection
         /// Inspects internal/private methods to find SMB download functionality
+        /// Returns a list of SMB file paths (one per GeometryAsset)
         /// </summary>
-        private static async Task<bool> TryDownloadSMBViaClientReflection(
+        private static async Task<List<string>> TryDownloadAllSMBViaClientReflection(
             Exchange exchange,
-            string smbFilePath,
+            string tempDir,
             List<string> diagnostics)
         {
             try
@@ -674,7 +678,7 @@ namespace DataExchangeNodes.DataExchange
                 {
                     diagnostics.Add("  ⚠️ Client instance is null - ensure SelectExchangeElements node has been used first");
                     diagnostics.Add("  This is expected if the SelectExchangeElements node hasn't been opened yet");
-                    return false;
+                    return new List<string>();
                 }
 
                 diagnostics.Add($"  ✓ Found Client instance: {client.GetType().FullName}");
@@ -729,16 +733,17 @@ namespace DataExchangeNodes.DataExchange
                 //if (await TryDownloadViaDirectSmbMethod(client, exchange, smbFilePath, smbDownloadMethod, diagnostics))
                 //    return true;
 
-                if (await TryDownloadViaParseGeometryAssetBinaryToIntermediateGeometry(client, exchange, smbFilePath, allMethods, diagnostics))
-                    return true;
+                var smbFilePaths = await TryDownloadAllViaParseGeometryAssetBinaryToIntermediateGeometry(client, exchange, tempDir, allMethods, diagnostics);
+                if (smbFilePaths != null && smbFilePaths.Count > 0)
+                    return smbFilePaths;
 
-                return false;
+                return new List<string>();
             }
             catch (Exception ex)
             {
                 diagnostics.Add($"  ⚠️ Reflection inspection failed: {ex.Message}");
                 diagnostics.Add($"  Stack: {ex.StackTrace}");
-                return false;
+                return new List<string>();
             }
         }
 
@@ -1253,28 +1258,336 @@ namespace DataExchangeNodes.DataExchange
         /// Attempts to download SMB using ParseGeometryAssetBinaryToIntermediateGeometry
         /// Uses two-step process: 1) Get binary data, 2) Convert to SMB
         /// </summary>
-        private static async Task<bool> TryDownloadViaParseGeometryAssetBinaryToIntermediateGeometry(
+        private static async Task<List<string>> TryDownloadAllViaParseGeometryAssetBinaryToIntermediateGeometry(
             object client,
             Exchange exchange,
-            string smbFilePath,
+            string tempDir,
             MethodInfo[] allMethods,
             List<string> diagnostics)
         {
-            diagnostics.Add($"  === Attempting to use ParseGeometryAssetBinaryToIntermediateGeometry (2-step process) ===");
+            diagnostics.Add($"  === Attempting to use ParseGeometryAssetBinaryToIntermediateGeometry for ALL GeometryAssets ===");
             
-            // Step 1: Get binary data
-            var (binaryData, geometryAsset, assetInfo, success) = await GetGeometryAssetBinaryData(
+            var smbFilePaths = new List<string>();
+            
+            // Step 1: Get binary data for ALL GeometryAssets
+            var allBinaryData = await GetAllGeometryAssetBinaryData(
                 client, exchange, allMethods, diagnostics);
             
-            if (!success || binaryData == null)
+            if (allBinaryData == null || allBinaryData.Count == 0)
             {
-                diagnostics.Add($"  ⚠️ Failed to get binary data");
-                return false;
+                diagnostics.Add($"  ⚠️ Failed to get binary data from any GeometryAsset");
+                return smbFilePaths;
             }
 
-            // Step 2: Convert binary to SMB
-            return ConvertBinaryToSMB(
-                client, binaryData, geometryAsset, assetInfo, smbFilePath, allMethods, diagnostics);
+            diagnostics.Add($"  ✓ Got binary data from {allBinaryData.Count} GeometryAsset(s)");
+
+            // Step 2: Convert each binary data to SMB and save to separate files
+            int index = 0;
+            foreach (var (binaryData, geometryAsset, assetInfo) in allBinaryData)
+            {
+                if (binaryData == null || binaryData.Length == 0)
+                    continue;
+                    
+                index++;
+                var geometryAssetIdProp = geometryAsset?.GetType().GetProperty("Id", BindingFlags.Public | BindingFlags.Instance);
+                var geometryAssetId = geometryAssetIdProp?.GetValue(geometryAsset)?.ToString() ?? index.ToString();
+                var smbFilePath = Path.Combine(tempDir, $"Exchange_{exchange.ExchangeId}_{exchange.CollectionId}_{geometryAssetId}.smb");
+                
+                diagnostics.Add($"  Processing GeometryAsset #{index} (ID: {geometryAssetId})...");
+                
+                var success = ConvertBinaryToSMB(
+                    client, binaryData, geometryAsset, assetInfo, smbFilePath, allMethods, diagnostics);
+                
+                if (success && File.Exists(smbFilePath))
+                {
+                    smbFilePaths.Add(smbFilePath);
+                    diagnostics.Add($"  ✓ Saved SMB file: {Path.GetFileName(smbFilePath)} ({new FileInfo(smbFilePath).Length} bytes)");
+                }
+                else
+                {
+                    diagnostics.Add($"  ⚠️ Failed to convert GeometryAsset #{index} to SMB");
+                }
+            }
+
+            return smbFilePaths;
+        }
+
+        /// <summary>
+        /// Gets binary data for ALL geometry assets from ElementDataModel
+        /// Returns a list of tuples (binaryData, geometryAsset, assetInfo) for each GeometryAsset
+        /// </summary>
+        private static async Task<List<(byte[] binaryData, object geometryAsset, object assetInfo)>> GetAllGeometryAssetBinaryData(
+            object client,
+            Exchange exchange,
+            MethodInfo[] allMethods,
+            List<string> diagnostics)
+        {
+            var results = new List<(byte[] binaryData, object geometryAsset, object assetInfo)>();
+            
+            diagnostics.Add($"  === Getting binary data from ALL GeometryAssets ===");
+            
+            // Reuse the logic from GetGeometryAssetBinaryData but collect ALL results instead of returning after first success
+            var downloadBinaryMethod = allMethods.FirstOrDefault(m => m.Name == "DownloadAndCacheBinaryForBinaryAsset");
+            if (downloadBinaryMethod == null)
+            {
+                diagnostics.Add($"  ⚠️ DownloadAndCacheBinaryForBinaryAsset method not found");
+                return results;
+            }
+
+            var identifierType = Type.GetType("Autodesk.DataExchange.Core.Models.DataExchangeIdentifier, Autodesk.DataExchange.Core");
+            if (identifierType == null)
+            {
+                diagnostics.Add($"  ⚠️ DataExchangeIdentifier type not found");
+                return results;
+            }
+
+            var identifier = Activator.CreateInstance(identifierType);
+            var exchangeIdProp = identifierType.GetProperty("ExchangeId");
+            var collectionIdProp = identifierType.GetProperty("CollectionId");
+            var hubIdProp = identifierType.GetProperty("HubId");
+            
+            if (exchangeIdProp != null) exchangeIdProp.SetValue(identifier, exchange.ExchangeId);
+            if (collectionIdProp != null) collectionIdProp.SetValue(identifier, exchange.CollectionId);
+            if (hubIdProp != null && !string.IsNullOrEmpty(exchange.HubId))
+            {
+                hubIdProp.SetValue(identifier, exchange.HubId);
+            }
+
+            var getElementDataModelMethod = allMethods.FirstOrDefault(m => 
+                m.Name == "GetElementDataModelAsync" && m.IsPublic);
+            
+            if (getElementDataModelMethod == null)
+            {
+                diagnostics.Add($"  ⚠️ GetElementDataModelAsync method not found");
+                return results;
+            }
+
+            diagnostics.Add($"  Getting ElementDataModel to find ALL GeometryAssets...");
+            var elementDataModelResult = getElementDataModelMethod.Invoke(client, new object[] { identifier, CancellationToken.None });
+            
+            if (elementDataModelResult == null)
+            {
+                diagnostics.Add($"  ⚠️ GetElementDataModelAsync returned null");
+                return results;
+            }
+
+            var taskResult = ((dynamic)elementDataModelResult).GetAwaiter().GetResult();
+            object elementDataModel = null;
+            
+            var responseType = taskResult?.GetType();
+            if (responseType != null)
+            {
+                var valueProp = responseType.GetProperty("Value");
+                if (valueProp != null)
+                {
+                    try
+                    {
+                        elementDataModel = valueProp.GetValue(taskResult);
+                    }
+                    catch
+                    {
+                        elementDataModel = taskResult;
+                    }
+                }
+                else
+                {
+                    elementDataModel = taskResult;
+                }
+            }
+            
+            if (elementDataModel == null)
+            {
+                diagnostics.Add($"  ⚠️ ElementDataModel is null");
+                return results;
+            }
+
+            var elementDataModelType = elementDataModel.GetType();
+            var exchangeDataProp = elementDataModelType.GetProperty("ExchangeData", 
+                BindingFlags.NonPublic | BindingFlags.Instance);
+            if (exchangeDataProp == null)
+            {
+                diagnostics.Add($"  ⚠️ ExchangeData property not found on ElementDataModel");
+                return results;
+            }
+
+            var exchangeData = exchangeDataProp.GetValue(elementDataModel);
+            if (exchangeData == null)
+            {
+                diagnostics.Add($"  ⚠️ ExchangeData is null");
+                return results;
+            }
+
+            var exchangeDataType = exchangeData.GetType();
+            
+            // Get GeometryAsset type
+            var geometryAssetType = Type.GetType("Autodesk.DataExchange.SchemaObjects.Assets.GeometryAsset, Autodesk.DataExchange");
+            if (geometryAssetType == null)
+            {
+                foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+                {
+                    try
+                    {
+                        geometryAssetType = assembly.GetType("Autodesk.DataExchange.SchemaObjects.Assets.GeometryAsset");
+                        if (geometryAssetType != null) break;
+                    }
+                    catch { }
+                }
+            }
+            
+            if (geometryAssetType == null)
+            {
+                diagnostics.Add($"  ⚠️ GeometryAsset type not found");
+                return results;
+            }
+            
+            // Get ALL GeometryAssets
+            var getAssetsByTypeMethod = exchangeDataType.GetMethod("GetAssetsByType", BindingFlags.Public | BindingFlags.Instance);
+            if (getAssetsByTypeMethod == null)
+            {
+                diagnostics.Add($"  ⚠️ GetAssetsByType method not found");
+                return results;
+            }
+            
+            var genericGetAssetsByType = getAssetsByTypeMethod.MakeGenericMethod(geometryAssetType);
+            var geometryAssetsResult = genericGetAssetsByType.Invoke(exchangeData, null);
+            
+            if (geometryAssetsResult == null)
+            {
+                diagnostics.Add($"  ⚠️ GetAssetsByType<GeometryAsset>() returned null");
+                return results;
+            }
+
+            var geometryAssets = geometryAssetsResult as System.Collections.IEnumerable;
+            if (geometryAssets == null)
+            {
+                diagnostics.Add($"  ⚠️ GeometryAssets result is not enumerable");
+                return results;
+            }
+
+            var allGeometryAssets = geometryAssets.Cast<object>().Where(g => g != null).ToList();
+            diagnostics.Add($"  Found {allGeometryAssets.Count} GeometryAsset(s)");
+
+            // Process EACH GeometryAsset and collect binary data
+            int processedCount = 0;
+            foreach (var geometryAsset in allGeometryAssets)
+            {
+                try
+                {
+                    var binaryRefProp = geometryAsset.GetType().GetProperty("BinaryReference");
+                    if (binaryRefProp == null)
+                    {
+                        diagnostics.Add($"  GeometryAsset #{processedCount + 1} has no BinaryReference property, skipping...");
+                        continue;
+                    }
+
+                    var binaryRef = binaryRefProp.GetValue(geometryAsset);
+                    if (binaryRef == null)
+                    {
+                        diagnostics.Add($"  GeometryAsset #{processedCount + 1} BinaryReference is null, skipping...");
+                        continue;
+                    }
+
+                    processedCount++;
+                    diagnostics.Add($"  Processing GeometryAsset #{processedCount}...");
+                    
+                    var downloadParams = downloadBinaryMethod.GetParameters();
+                    object[] downloadInvokeParams;
+                    
+                    if (downloadParams.Length == 3)
+                    {
+                        downloadInvokeParams = new object[] { identifier, binaryRef, CancellationToken.None };
+                    }
+                    else if (downloadParams.Length == 4)
+                    {
+                        var clientTypeForWorkSpace = client.GetType();
+                        var workSpaceProp = clientTypeForWorkSpace.GetProperty("WorkSpaceUserGeometryPath");
+                        var workSpacePath = workSpaceProp?.GetValue(client)?.ToString() ?? Path.GetTempPath();
+                        downloadInvokeParams = new object[] { identifier, binaryRef, workSpacePath, CancellationToken.None };
+                    }
+                    else
+                    {
+                        downloadInvokeParams = new object[] { identifier, binaryRef };
+                    }
+                    
+                    var downloadResult = downloadBinaryMethod.Invoke(client, downloadInvokeParams);
+                    
+                    if (downloadResult != null && downloadResult.GetType().IsGenericType)
+                    {
+                        var binaryFilePath = ((dynamic)downloadResult).GetAwaiter().GetResult();
+                        
+                        if (string.IsNullOrEmpty(binaryFilePath) || !File.Exists(binaryFilePath))
+                        {
+                            diagnostics.Add($"  ⚠️ GeometryAsset #{processedCount}: Binary file not found: {binaryFilePath}");
+                            continue;
+                        }
+
+                        byte[] binaryData = null;
+                        var startProp = binaryRef.GetType().GetProperty("Start");
+                        var endProp = binaryRef.GetType().GetProperty("End");
+                        
+                        if (startProp != null && endProp != null)
+                        {
+                            var start = Convert.ToInt64(startProp.GetValue(binaryRef));
+                            var end = Convert.ToInt64(endProp.GetValue(binaryRef));
+                            var length = end - start + 1;
+                            
+                            using (var fileStream = new FileStream(binaryFilePath, FileMode.Open, FileAccess.Read))
+                            {
+                                fileStream.Seek(start, SeekOrigin.Begin);
+                                binaryData = new byte[length];
+                                var bytesRead = fileStream.Read(binaryData, 0, (int)length);
+                                if (bytesRead < length)
+                                {
+                                    Array.Resize(ref binaryData, bytesRead);
+                                }
+                            }
+                        }
+                        else
+                        {
+                            binaryData = File.ReadAllBytes(binaryFilePath);
+                        }
+
+                        // Create AssetInfo
+                        object assetInfo = null;
+                        var createAssetInfoMethod = allMethods.FirstOrDefault(m => m.Name == "CreateAssetInfoForGeometryAsset");
+                        if (createAssetInfoMethod != null)
+                        {
+                            try
+                            {
+                                assetInfo = createAssetInfoMethod.Invoke(client, new object[] { geometryAsset });
+                            }
+                            catch
+                            {
+                                var assetInfoType = Type.GetType("Autodesk.GeometryUtilities.SDK.AssetInfo, Autodesk.GeometryUtilities") ??
+                                                   Type.GetType("Autodesk.DataExchange.DataModels.AssetInfo, Autodesk.DataExchange.DataModels");
+                                if (assetInfoType != null)
+                                {
+                                    assetInfo = Activator.CreateInstance(assetInfoType);
+                                }
+                            }
+                        }
+                        else
+                        {
+                            var assetInfoType = Type.GetType("Autodesk.GeometryUtilities.SDK.AssetInfo, Autodesk.GeometryUtilities") ??
+                                               Type.GetType("Autodesk.DataExchange.DataModels.AssetInfo, Autodesk.DataExchange.DataModels");
+                            if (assetInfoType != null)
+                            {
+                                assetInfo = Activator.CreateInstance(assetInfoType);
+                            }
+                        }
+                        
+                        results.Add((binaryData, geometryAsset, assetInfo));
+                        diagnostics.Add($"  ✓ GeometryAsset #{processedCount}: Got {binaryData.Length} bytes");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    diagnostics.Add($"  ⚠️ Error processing GeometryAsset #{processedCount + 1}: {ex.Message}");
+                }
+            }
+
+            diagnostics.Add($"  ✓ Successfully processed {results.Count} out of {allGeometryAssets.Count} GeometryAsset(s)");
+            return results;
         }
 
         // Removed unused methods: TryDownloadViaElementDataModelAsync, TryDownloadViaGetAllAssetInfosWithTranslatedGeometryPath, 

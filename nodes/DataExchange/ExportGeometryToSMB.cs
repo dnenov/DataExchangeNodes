@@ -113,46 +113,46 @@ namespace DataExchangeNodes.DataExchange
                     {
                         _typeCache[typeName] = cachedType; // Also cache in static cache
                         sw.Stop();
-                        return cachedType;
-                    }
+                    return cachedType;
+                }
 
                     // Try searchFromType's assembly first (most common case)
-                    if (searchFromType != null)
+                if (searchFromType != null)
+                {
+                    var type = searchFromType.Assembly.GetType(typeName);
+                    if (type != null)
                     {
-                        var type = searchFromType.Assembly.GetType(typeName);
-                        if (type != null)
-                        {
                             _typeCache[typeName] = type; // Cache in static cache
-                            cache?.Add(typeName, type);
+                        cache?.Add(typeName, type);
                             sw.Stop();
-                            return type;
-                        }
+                        return type;
                     }
+                }
 
                     // Search all DataExchange assemblies (SLOW - assembly scan)
-                    var allAssemblies = AppDomain.CurrentDomain.GetAssemblies()
-                        .Where(a => a.GetName().Name.Contains("DataExchange"))
-                        .ToList();
+                var allAssemblies = AppDomain.CurrentDomain.GetAssemblies()
+                    .Where(a => a.GetName().Name.Contains("DataExchange"))
+                    .ToList();
 
-                    foreach (var asm in allAssemblies)
+                foreach (var asm in allAssemblies)
+                {
+                    var foundType = asm.GetType(typeName);
+                    if (foundType != null)
                     {
-                        var foundType = asm.GetType(typeName);
-                        if (foundType != null)
-                        {
                             _typeCache[typeName] = foundType; // Cache in static cache
-                            cache?.Add(typeName, foundType);
+                        cache?.Add(typeName, foundType);
                             sw.Stop();
                             // Log slow type lookups (assembly scan)
                             if (sw.ElapsedMilliseconds > 10)
                             {
                                 // Could add diagnostics here if needed, but would require passing diagnostics parameter
                             }
-                            return foundType;
-                        }
+                        return foundType;
                     }
+                }
 
                     sw.Stop();
-                    return null;
+                return null;
                 }
                 finally
                 {
@@ -175,20 +175,20 @@ namespace DataExchangeNodes.DataExchange
                 var cacheKey = $"{type.FullName}.SetId";
                 if (!_methodCache.TryGetValue(cacheKey, out var setIdMethod))
                 {
-                    // Find SetId method (might be on base type)
+                // Find SetId method (might be on base type)
                     setIdMethod = type.GetMethod("SetId", BindingFlags.NonPublic | BindingFlags.Instance);
-                    if (setIdMethod == null)
+                if (setIdMethod == null)
+                {
+                    var baseType = type.BaseType;
+                    if (baseType != null)
                     {
-                        var baseType = type.BaseType;
-                        if (baseType != null)
-                        {
-                            setIdMethod = baseType.GetMethod("SetId", BindingFlags.NonPublic | BindingFlags.Instance);
-                        }
+                        setIdMethod = baseType.GetMethod("SetId", BindingFlags.NonPublic | BindingFlags.Instance);
                     }
+                }
 
-                    if (setIdMethod == null)
-                    {
-                        throw new InvalidOperationException($"Could not find SetId method on {type.FullName} or its base types");
+                if (setIdMethod == null)
+                {
+                    throw new InvalidOperationException($"Could not find SetId method on {type.FullName} or its base types");
                     }
                     
                     _methodCache[cacheKey] = setIdMethod;
@@ -778,7 +778,7 @@ namespace DataExchangeNodes.DataExchange
                 // Find ExportToSMB method
                 var allExportMethods = TimeOperation("Find ExportToSMB methods via reflection", 
                     () => geometryType.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)
-                        .Where(m => m.Name == "ExportToSMB")
+                    .Where(m => m.Name == "ExportToSMB")
                         .ToList(), diagnostics);
                 
                 diagnostics.Add($"Found {allExportMethods.Count} ExportToSMB method(s):");
@@ -1174,16 +1174,16 @@ namespace DataExchangeNodes.DataExchange
                         {
                             identifierProperty.SetValue(elementDataModel, identifier);
                             diagnostics.Add($"  ✓ Set ExchangeIdentifier on ElementDataModel");
-                        }
                     }
                 }
-                
-                if (elementDataModel == null)
-                {
-                    var valueInfo = valueProp != null 
-                        ? $"Value type: {valueProp.GetValue(response)?.GetType().FullName ?? "null"}" 
-                        : "No Value property";
-                    throw new InvalidOperationException(
+            }
+
+            if (elementDataModel == null)
+            {
+                var valueInfo = valueProp != null 
+                    ? $"Value type: {valueProp.GetValue(response)?.GetType().FullName ?? "null"}" 
+                    : "No Value property";
+                throw new InvalidOperationException(
                         $"Could not extract or create ElementDataModel. Response Value was null (new exchange), and could not find Create method or suitable constructor. {valueInfo}");
                 }
             }
@@ -1200,6 +1200,46 @@ namespace DataExchangeNodes.DataExchange
         /// </summary>
         private static object CreateElement(ElementDataModel elementDataModel, string finalElementId, string elementName, List<string> diagnostics)
         {
+            // First, try to find an existing element with the same name
+            diagnostics.Add($"\nLooking for existing element with name: {elementName}...");
+            var elementsProperty = typeof(ElementDataModel).GetProperty("Elements", BindingFlags.Public | BindingFlags.Instance);
+            bool foundExistingElement = false;
+            if (elementsProperty != null)
+            {
+                var elements = elementsProperty.GetValue(elementDataModel) as System.Collections.IEnumerable;
+                if (elements != null)
+                {
+                    var elementsList = elements.Cast<object>().ToList();
+                    diagnostics.Add($"  Checking {elementsList.Count} existing element(s) in the exchange...");
+                    
+                    foreach (var existingElement in elementsList)
+                    {
+                        var nameProp = existingElement.GetType().GetProperty("Name", BindingFlags.Public | BindingFlags.Instance);
+                        if (nameProp != null)
+                        {
+                            var existingName = nameProp.GetValue(existingElement)?.ToString();
+                            diagnostics.Add($"    - Existing element name: '{existingName}' (comparing with: '{elementName}')");
+                            
+                            if (existingName == elementName)
+                            {
+                                foundExistingElement = true;
+                                var idProp = existingElement.GetType().GetProperty("Id", BindingFlags.Public | BindingFlags.Instance);
+                                var existingId = idProp?.GetValue(existingElement)?.ToString() ?? "N/A";
+                                diagnostics.Add($"  ✓ FOUND EXISTING ELEMENT/GROUP with matching name: '{elementName}' (ID: {existingId})");
+                                diagnostics.Add($"  Will reuse this element and add geometry to it");
+                                return existingElement;
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // No existing element found, create a new one
+            if (!foundExistingElement)
+            {
+                diagnostics.Add($"  ✗ No existing element/group found with name: '{elementName}'");
+                diagnostics.Add($"  Will create a new element");
+            }
                 diagnostics.Add("\nCreating ElementProperties...");
                 var elementProperties = new ElementProperties(
                     finalElementId,
@@ -1216,7 +1256,7 @@ namespace DataExchangeNodes.DataExchange
                 {
                     throw new InvalidOperationException("AddElement returned null");
                 }
-                diagnostics.Add($"✓ Added element: {element.GetType().FullName}");
+            diagnostics.Add($"✓ Added new element: {element.GetType().FullName}");
             return element;
         }
 
@@ -1264,7 +1304,7 @@ namespace DataExchangeNodes.DataExchange
                 var foundTypes = new Dictionary<string, Type>();
                 foreach (var typeName in typesToFind)
                 {
-                    var foundType = ReflectionHelper.FindType(typeName, exchangeDataType, foundTypes);
+                var foundType = ReflectionHelper.FindType(typeName, exchangeDataType, foundTypes);
                     if (foundType != null && !foundTypes.ContainsKey(typeName))
                     {
                         foundTypes[typeName] = foundType;
@@ -1289,7 +1329,7 @@ namespace DataExchangeNodes.DataExchange
                 {
                     throw new InvalidOperationException("Could not find GeometryAsset type");
                 }
-            }
+                }
 
             var geometryAssetId = Guid.NewGuid().ToString();
             var geometryAsset = ReflectionHelper.CreateInstanceWithId(geometryAssetType, geometryAssetId, foundTypes, diagnostics);
@@ -1339,12 +1379,12 @@ namespace DataExchangeNodes.DataExchange
             if (!foundTypes.TryGetValue(geometryTypeTypeName, out var geometryTypeEnumType))
             {
                 geometryTypeEnumType = ReflectionHelper.FindType(geometryTypeTypeName, exchangeDataType, foundTypes);
-            }
-            
-            if (geometryFormatEnumType == null || geometryTypeEnumType == null)
-            {
-                throw new InvalidOperationException("Could not find GeometryFormat or GeometryType enum types");
-            }
+                }
+                
+                if (geometryFormatEnumType == null || geometryTypeEnumType == null)
+                {
+                    throw new InvalidOperationException("Could not find GeometryFormat or GeometryType enum types");
+                }
                 
                 var stepFormat = Enum.Parse(geometryFormatEnumType, "Step");
                 var brepType = Enum.Parse(geometryTypeEnumType, "BRep");
@@ -1376,7 +1416,7 @@ namespace DataExchangeNodes.DataExchange
         /// <summary>
         /// Creates GeometryComponent and sets it on GeometryAsset (simplified - uses FindType)
         /// </summary>
-        private static void CreateGeometryComponent(object geometryAsset, Type geometryAssetType, object geometryWrapper, Dictionary<string, Type> foundTypes, Type exchangeDataType, List<string> diagnostics)
+        private static void CreateGeometryComponent(object geometryAsset, Type geometryAssetType, object geometryWrapper, Dictionary<string, Type> foundTypes, Type exchangeDataType, string geometryName, List<string> diagnostics)
         {
             const string geometryComponentTypeName = "Autodesk.DataExchange.SchemaObjects.Components.GeometryComponent";
             if (!foundTypes.TryGetValue(geometryComponentTypeName, out var geometryComponentType))
@@ -1386,7 +1426,7 @@ namespace DataExchangeNodes.DataExchange
                 {
                     throw new InvalidOperationException("Could not find GeometryComponent type");
                 }
-            }
+                }
 
                 var geometryComponent = Activator.CreateInstance(geometryComponentType);
                 var geometryProperty = geometryComponentType.GetProperty("Geometry", BindingFlags.NonPublic | BindingFlags.Instance);
@@ -1415,22 +1455,22 @@ namespace DataExchangeNodes.DataExchange
             const string componentTypeName = "Autodesk.DataExchange.SchemaObjects.Components.Component";
             if (foundTypes.TryGetValue(componentTypeName, out var componentType) || 
                 (componentType = ReflectionHelper.FindType(componentTypeName, exchangeDataType, foundTypes)) != null)
-            {
-                var objectInfo = Activator.CreateInstance(componentType);
-                var nameProperty = componentType.GetProperty("Name", BindingFlags.Public | BindingFlags.Instance);
-                if (nameProperty != null)
-                {
+                    {
+                        var objectInfo = Activator.CreateInstance(componentType);
+                        var nameProperty = componentType.GetProperty("Name", BindingFlags.Public | BindingFlags.Instance);
+                        if (nameProperty != null)
+                        {
                     nameProperty.SetValue(objectInfo, name);
-                }
+                        }
                 return objectInfo;
-            }
+                    }
             return null;
         }
 
         /// <summary>
         /// Adds GeometryAsset to ExchangeData and sets ObjectInfo
         /// </summary>
-        private static void AddGeometryAssetToExchangeData(object geometryAsset, object exchangeData, Type exchangeDataType, string geometryFilePath, Dictionary<string, Type> foundTypes, List<string> diagnostics)
+        private static void AddGeometryAssetToExchangeData(object geometryAsset, object exchangeData, Type exchangeDataType, string geometryFilePath, Dictionary<string, Type> foundTypes, string geometryName, List<string> diagnostics)
         {
                 var exchangeDataAddMethod = exchangeDataType.GetMethod("Add", BindingFlags.Public | BindingFlags.Instance);
                 if (exchangeDataAddMethod == null)
@@ -1445,10 +1485,15 @@ namespace DataExchangeNodes.DataExchange
                 var objectInfoProperty = geometryAssetType.GetProperty("ObjectInfo", BindingFlags.Public | BindingFlags.Instance);
                 if (objectInfoProperty != null)
                 {
-                    var objectInfo = CreateObjectInfo(Path.GetFileNameWithoutExtension(geometryFilePath), foundTypes, exchangeDataType, diagnostics);
+                    // Use provided geometryName, or fall back to filename if not provided
+                    var nameToUse = !string.IsNullOrEmpty(geometryName) 
+                        ? geometryName 
+                        : Path.GetFileNameWithoutExtension(geometryFilePath);
+                    var objectInfo = CreateObjectInfo(nameToUse, foundTypes, exchangeDataType, diagnostics);
                     if (objectInfo != null)
                     {
                         objectInfoProperty.SetValue(geometryAsset, objectInfo);
+                        diagnostics.Add($"  ✓ Set ObjectInfo name: {nameToUse}");
                     }
                 }
         }
@@ -1492,13 +1537,14 @@ END-ISO-10303-21;
         // Static dictionary to store GeometryAsset ID -> SMB path mapping for the adapter pattern
         // Key: ExchangeId_GeometryAssetId, Value: SMB file path
         private static Dictionary<string, string> geometryAssetIdToSmbPathMapping = new Dictionary<string, string>();
+        private static Dictionary<string, int> geometryAssetIdToGeometryCountMapping = new Dictionary<string, int>();
 
         /// <summary>
         /// Adds GeometryAsset to UnsavedGeometryMapping using SetBRepGeometryByAsset
         /// ADAPTER PATTERN: Register dummy STEP file (not SMB) to satisfy SDK's STEP→SMB translation contract.
         /// The real SMB file will be set as OutputPath later in GetAllAssetInfosWithTranslatedGeometryPathForSMB.
         /// </summary>
-        private static string AddGeometryAssetToUnsavedMapping(object geometryAsset, object exchangeData, Type exchangeDataType, string smbFilePath, string exchangeId, List<string> diagnostics)
+        private static string AddGeometryAssetToUnsavedMapping(object geometryAsset, object exchangeData, Type exchangeDataType, string smbFilePath, string exchangeId, int geometryCount, List<string> diagnostics)
         {
             diagnostics.Add($"\nAdding GeometryAsset to UnsavedGeometryMapping...");
             try
@@ -1536,7 +1582,8 @@ END-ISO-10303-21;
                 // Store mapping for later retrieval
                 var mappingKey = $"{exchangeId}_{geometryAssetId}";
                 geometryAssetIdToSmbPathMapping[mappingKey] = smbFilePath;
-                diagnostics.Add($"  Stored mapping: GeometryAsset {geometryAssetId} -> SMB: {smbFilePath}");
+                geometryAssetIdToGeometryCountMapping[mappingKey] = geometryCount;
+                diagnostics.Add($"  Stored mapping: GeometryAsset {geometryAssetId} -> SMB: {smbFilePath} (geometry count: {geometryCount})");
                 
                 return dummyStepPath;
             }
@@ -1552,7 +1599,7 @@ END-ISO-10303-21;
         /// ADAPTER PATTERN: Path = dummy STEP (source), OutputPath = real SMB (translated output)
         /// This satisfies the SDK's translation contract while using pre-translated SMB geometry.
         /// </summary>
-        private static System.Collections.Generic.IEnumerable<object> GetAllAssetInfosWithTranslatedGeometryPathForSMB(object client, Type clientType, object exchangeData, Type exchangeDataType, DataExchangeIdentifier exchangeIdentifier, string fulfillmentId, Dictionary<string, string> geometryAssetIdToSmbPath, List<string> diagnostics)
+        private static System.Collections.Generic.IEnumerable<object> GetAllAssetInfosWithTranslatedGeometryPathForSMB(object client, Type clientType, object exchangeData, Type exchangeDataType, DataExchangeIdentifier exchangeIdentifier, string fulfillmentId, Dictionary<string, string> geometryAssetIdToSmbPath, Dictionary<string, int> geometryAssetIdToGeometryCount, List<string> diagnostics)
         {
             diagnostics.Add($"\nGetting AssetInfos from UnsavedGeometryMapping (skipping STEP→SMB conversion)...");
             try
@@ -1592,10 +1639,13 @@ END-ISO-10303-21;
                             var outputPathProp = assetInfo.GetType().GetProperty("OutputPath", BindingFlags.Public | BindingFlags.Instance);
                             var idProp = assetInfo.GetType().GetProperty("Id", BindingFlags.Public | BindingFlags.Instance);
                             
+                            // Declare assetInfoId in broader scope so it's accessible later
+                            string assetInfoId = null;
+                            
                             if (pathProp != null && outputPathProp != null && idProp != null)
                             {
                                 var path = pathProp.GetValue(assetInfo)?.ToString();
-                                var assetInfoId = idProp.GetValue(assetInfo)?.ToString();
+                                assetInfoId = idProp.GetValue(assetInfo)?.ToString();
                                 
                                 if (!string.IsNullOrEmpty(path) && !string.IsNullOrEmpty(assetInfoId))
                                 {
@@ -1636,6 +1686,7 @@ END-ISO-10303-21;
                             }
 
                             // Ensure BodyInfoList is set for BRep type (required for UploadGeometries)
+                            // If the SMB file contains multiple geometries, create multiple BodyInfo objects
                             var bodyInfoListProp = assetInfo.GetType().GetProperty("BodyInfoList", BindingFlags.Public | BindingFlags.Instance);
                             if (bodyInfoListProp != null)
                             {
@@ -1649,9 +1700,20 @@ END-ISO-10303-21;
                                         
                                         if (bodyInfoType != null && bodyTypeEnum != null)
                                         {
-                                            var bodyInfo = Activator.CreateInstance(bodyInfoType);
-                                            var typeProp = bodyInfoType.GetProperty("Type");
-                                            if (typeProp != null)
+                                            // Determine how many BodyInfo objects to create
+                                            int geometryCount = 1; // Default to 1
+                                            if (geometryAssetIdToGeometryCount != null && geometryAssetIdToGeometryCount.TryGetValue(assetInfoId, out var count))
+                                            {
+                                                geometryCount = count;
+                                            }
+                                            
+                                            diagnostics.Add($"  Creating {geometryCount} BodyInfo object(s) for AssetInfo {assetInfoId}");
+                                            
+                                            var bodyInfoListType = typeof(System.Collections.Generic.List<>).MakeGenericType(bodyInfoType);
+                                            var bodyInfoList = Activator.CreateInstance(bodyInfoListType);
+                                            var addMethod = bodyInfoListType.GetMethod("Add");
+                                            
+                                            if (addMethod != null)
                                             {
                                                 // Try to find BRep value in enum
                                                 var brepValue = Enum.GetValues(bodyTypeEnum).Cast<object>().FirstOrDefault(v => 
@@ -1662,23 +1724,37 @@ END-ISO-10303-21;
                                                     var enumValues = Enum.GetValues(bodyTypeEnum);
                                                     brepValue = enumValues.GetValue(enumValues.Length > 1 ? 1 : 0);
                                                 }
-                                                typeProp.SetValue(bodyInfo, brepValue);
                                                 
-                                                var bodyInfoListType = typeof(System.Collections.Generic.List<>).MakeGenericType(bodyInfoType);
-                                                var bodyInfoList = Activator.CreateInstance(bodyInfoListType);
-                                                var addMethod = bodyInfoListType.GetMethod("Add");
-                                                if (addMethod != null)
+                                                // Create one BodyInfo per geometry
+                                                for (int i = 0; i < geometryCount; i++)
                                                 {
-                                                    addMethod.Invoke(bodyInfoList, new object[] { bodyInfo });
-                                                    bodyInfoListProp.SetValue(assetInfo, bodyInfoList);
-                                                    diagnostics.Add($"  Set BodyInfoList with BRep type on AssetInfo");
+                                                    var bodyInfo = Activator.CreateInstance(bodyInfoType);
+                                                    var typeProp = bodyInfoType.GetProperty("Type");
+                                                    if (typeProp != null)
+                                                    {
+                                                        typeProp.SetValue(bodyInfo, brepValue);
+                                                        addMethod.Invoke(bodyInfoList, new object[] { bodyInfo });
+                                                    }
                                                 }
+                                                
+                                                bodyInfoListProp.SetValue(assetInfo, bodyInfoList);
+                                                diagnostics.Add($"  ✓ Set BodyInfoList with {geometryCount} BodyInfo object(s) (BRep type) on AssetInfo");
                                             }
                                         }
                                     }
                                     catch (Exception ex)
                                     {
                                         diagnostics.Add($"  ⚠️ Failed to set BodyInfoList: {ex.Message}");
+                                    }
+                                }
+                                else
+                                {
+                                    // BodyInfoList already exists - log its count
+                                    var countProp = existingBodyInfoList.GetType().GetProperty("Count");
+                                    if (countProp != null)
+                                    {
+                                        var count = countProp.GetValue(existingBodyInfoList);
+                                        diagnostics.Add($"  BodyInfoList already exists with {count} BodyInfo object(s)");
                                     }
                                 }
                             }
@@ -1741,9 +1817,9 @@ END-ISO-10303-21;
             if (!foundTypes.TryGetValue(designAssetTypeName, out var designAssetType))
             {
                 designAssetType = ReflectionHelper.FindType(designAssetTypeName, exchangeDataType, foundTypes);
-                if (designAssetType == null)
-                {
-                    throw new InvalidOperationException("Could not find DesignAsset type");
+            if (designAssetType == null)
+            {
+                throw new InvalidOperationException("Could not find DesignAsset type");
                 }
             }
 
@@ -1858,13 +1934,11 @@ END-ISO-10303-21;
                 }
             }
             
-            // Always create a NEW DesignAsset for this upload (don't reuse existing ones)
-            // This ensures each upload appears as a separate item in the tree
+            // Try to find and reuse existing DesignAsset, or create a new one if none exists
             object designAsset = null;
             
             // Check if Element's InstanceAsset already has a DesignAsset (from AddElement or previous uploads)
             var elementAssetChildNodesProp = elementAssetType.GetProperty("ChildNodes", BindingFlags.Public | BindingFlags.Instance);
-            bool hasExistingDesignAsset = false;
             if (elementAssetChildNodesProp != null)
             {
                 var elementChildNodes = elementAssetChildNodesProp.GetValue(elementAsset) as System.Collections.IEnumerable;
@@ -1878,22 +1952,36 @@ END-ISO-10303-21;
                             var node = nodeProp.GetValue(childNodeRel);
                             if (node != null && designAssetType.IsAssignableFrom(node.GetType()))
                             {
-                                hasExistingDesignAsset = true;
+                                // Check if this DesignAsset has ModelStructure (required for geometry)
+                                var relationshipProp = childNodeRel.GetType().GetProperty("Relationship", BindingFlags.Public | BindingFlags.Instance);
+                                if (relationshipProp != null)
+                                {
+                                    var relationship = relationshipProp.GetValue(childNodeRel);
+                                    if (relationship != null)
+                                    {
+                                        var modelStructureProp = relationship.GetType().GetProperty("ModelStructure", BindingFlags.Public | BindingFlags.Instance);
+                                        var modelStructure = modelStructureProp?.GetValue(relationship);
+                                        if (modelStructure != null)
+                                        {
+                                            // Found existing DesignAsset with ModelStructure - reuse it
+                                            designAsset = node;
                                 var idProp = node.GetType().GetProperty("Id", BindingFlags.Public | BindingFlags.Instance);
                                 var existingId = idProp?.GetValue(node)?.ToString() ?? "N/A";
-                                diagnostics.Add($"  ⚠️ Found existing DesignAsset (ID: {existingId}) - will create new one for this upload");
+                                            diagnostics.Add($"  ✓ Found existing DesignAsset (ID: {existingId}) - will reuse it and add geometry");
                                 break;
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
                 }
             }
             
-            // Always create a NEW DesignAsset for this geometry upload
-            // This ensures each upload appears as a separate, distinct item
-            diagnostics.Add("  Creating new DesignAsset for this geometry upload...");
+            // If no existing DesignAsset found, create a new one
+            if (designAsset == null)
             {
-                diagnostics.Add("  Creating new DesignAsset for Element's InstanceAsset...");
+                diagnostics.Add("  No existing DesignAsset found - creating new one...");
                 var designAssetId = Guid.NewGuid().ToString();
                 designAsset = ReflectionHelper.CreateInstanceWithId(designAssetType, designAssetId, foundTypes, diagnostics);
                 
@@ -2018,6 +2106,369 @@ END-ISO-10303-21;
                         addChildMethod.Invoke(designAsset, new object[] { geometryAsset, containmentRelationship });
                         diagnostics.Add($"✓ Added GeometryAsset to DesignAsset using ContainmentRelationship");
                         diagnostics.Add($"✓ Complete hierarchy: RootAsset -> InstanceAsset -> DesignAsset -> GeometryAsset");
+                    }
+                    else
+                    {
+                        throw new InvalidOperationException("Could not find ContainmentRelationship type");
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Loads geometries from an SMB file to count how many it contains
+        /// </summary>
+        private static List<Geometry> LoadGeometriesFromSMBFile(string smbFilePath, string unit, List<string> diagnostics)
+        {
+            var geometries = new List<Geometry>();
+            
+            try
+            {
+                if (!File.Exists(smbFilePath))
+                {
+                    throw new FileNotFoundException($"SMB file not found: {smbFilePath}");
+                }
+
+                // Convert unit to mmPerUnit
+                double mmPerUnit = ConvertUnitToMmPerUnit(unit);
+                
+                // Use Geometry.ImportFromSMB to load all geometries from the file
+                var geometryType = typeof(Geometry);
+                var importMethod = geometryType.GetMethod("ImportFromSMB", 
+                    BindingFlags.Public | BindingFlags.Static,
+                    null,
+                    new[] { typeof(string), typeof(double) },
+                    null);
+                
+                if (importMethod != null)
+                {
+                    var result = importMethod.Invoke(null, new object[] { smbFilePath, mmPerUnit }) as Geometry[];
+                    if (result != null && result.Length > 0)
+                    {
+                        geometries.AddRange(result);
+                    }
+                }
+                else
+                {
+                    diagnostics.Add($"  ⚠️ ImportFromSMB method not found - cannot count geometries");
+                }
+            }
+            catch (Exception ex)
+            {
+                diagnostics.Add($"  ⚠️ Error loading geometries from SMB file: {ex.Message}");
+            }
+            
+            return geometries;
+        }
+
+        /// <summary>
+        /// Sets up DesignAsset and relationships for multiple GeometryAssets
+        /// All GeometryAssets are added to the same DesignAsset
+        /// </summary>
+        private static void SetupDesignAssetAndRelationshipsForMultipleGeometries(
+            object element,
+            List<(object geometryAsset, Type geometryAssetType, string geometryAssetId)> geometryAssets,
+            object exchangeData,
+            Type exchangeDataType,
+            Dictionary<string, Type> foundTypes,
+            string elementName,
+            List<string> diagnostics)
+        {
+            if (geometryAssets == null || geometryAssets.Count == 0)
+            {
+                diagnostics.Add("  ⚠️ No GeometryAssets provided");
+                return;
+            }
+
+            diagnostics.Add($"\nSetting up DesignAsset for {geometryAssets.Count} GeometryAsset(s)...");
+            
+            // Get required types
+            const string designAssetTypeName = "Autodesk.DataExchange.SchemaObjects.Assets.DesignAsset";
+            if (!foundTypes.TryGetValue(designAssetTypeName, out var designAssetType))
+            {
+                designAssetType = ReflectionHelper.FindType(designAssetTypeName, exchangeDataType, foundTypes);
+                if (designAssetType == null)
+                {
+                    throw new InvalidOperationException("Could not find DesignAsset type");
+                }
+            }
+
+            const string instanceAssetTypeName = "Autodesk.DataExchange.SchemaObjects.Assets.InstanceAsset";
+            if (!foundTypes.TryGetValue(instanceAssetTypeName, out var instanceAssetType))
+            {
+                instanceAssetType = ReflectionHelper.FindType(instanceAssetTypeName, exchangeDataType, foundTypes);
+                if (instanceAssetType == null)
+                {
+                    throw new InvalidOperationException("Could not find InstanceAsset type");
+                }
+            }
+
+            // Get RootAsset
+            var rootAssetProp = exchangeDataType.GetProperty("RootAsset", BindingFlags.Public | BindingFlags.Instance);
+            if (rootAssetProp == null)
+            {
+                throw new InvalidOperationException("Could not find RootAsset property on ExchangeData");
+            }
+            
+            object rootAsset = rootAssetProp.GetValue(exchangeData);
+            
+            if (rootAsset == null)
+            {
+                diagnostics.Add("\nRootAsset is null - creating TopLevelAssembly...");
+                var rootAssetId = Guid.NewGuid().ToString();
+                rootAsset = ReflectionHelper.CreateInstanceWithId(designAssetType, rootAssetId, foundTypes, diagnostics);
+                
+                var objectInfoProp = designAssetType.GetProperty("ObjectInfo", BindingFlags.Public | BindingFlags.Instance);
+                if (objectInfoProp != null)
+                {
+                    var objectInfo = CreateObjectInfo("TopLevelAssembly", foundTypes, exchangeDataType, diagnostics);
+                    if (objectInfo != null)
+                    {
+                        objectInfoProp.SetValue(rootAsset, objectInfo);
+                    }
+                }
+                
+                var exchangeDataAddMethod = exchangeDataType.GetMethod("Add", BindingFlags.Public | BindingFlags.Instance);
+                if (exchangeDataAddMethod != null)
+                {
+                    exchangeDataAddMethod.Invoke(exchangeData, new object[] { rootAsset });
+                }
+                
+                var rootAssetPropSetter = exchangeDataType.GetProperty("RootAsset", BindingFlags.Public | BindingFlags.Instance);
+                if (rootAssetPropSetter != null && rootAssetPropSetter.CanWrite)
+                {
+                    rootAssetPropSetter.SetValue(exchangeData, rootAsset);
+                }
+                
+                diagnostics.Add("✓ Created RootAsset (TopLevelAssembly)");
+            }
+            else
+            {
+                diagnostics.Add("✓ Found existing RootAsset (TopLevelAssembly)");
+            }
+
+            // Get Element's InstanceAsset
+            var elementAssetProp = element.GetType().GetProperty("Asset", BindingFlags.NonPublic | BindingFlags.Instance);
+            if (elementAssetProp == null)
+            {
+                throw new InvalidOperationException("Could not find Asset property on Element");
+            }
+            
+            var elementAsset = elementAssetProp.GetValue(element);
+            if (elementAsset == null)
+            {
+                throw new InvalidOperationException("Element's Asset is null");
+            }
+            
+            var elementAssetType = elementAsset.GetType();
+            diagnostics.Add($"  Element's Asset type: {elementAssetType.Name}");
+
+            // Check if Element's InstanceAsset is linked to RootAsset
+            var rootAssetChildNodesProp = rootAsset.GetType().GetProperty("ChildNodes", BindingFlags.Public | BindingFlags.Instance);
+            bool elementInstanceLinkedToRoot = false;
+            if (rootAssetChildNodesProp != null)
+            {
+                var rootChildNodes = rootAssetChildNodesProp.GetValue(rootAsset) as System.Collections.IEnumerable;
+                if (rootChildNodes != null)
+                {
+                    foreach (var childNodeRel in rootChildNodes)
+                    {
+                        var nodeProp = childNodeRel.GetType().GetProperty("Node", BindingFlags.Public | BindingFlags.Instance);
+                        if (nodeProp != null)
+                        {
+                            var node = nodeProp.GetValue(childNodeRel);
+                            if (node != null && node == elementAsset)
+                            {
+                                elementInstanceLinkedToRoot = true;
+                                diagnostics.Add("  ✓ Element's InstanceAsset is already linked to RootAsset");
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // Link Element's InstanceAsset to RootAsset if not already linked
+            if (!elementInstanceLinkedToRoot)
+            {
+                var rootAddChildMethod = rootAsset.GetType().GetMethod("AddChild", BindingFlags.Public | BindingFlags.Instance);
+                if (rootAddChildMethod != null)
+                {
+                    const string containmentRelationshipTypeName = "Autodesk.DataExchange.SchemaObjects.Relationships.ContainmentRelationship";
+                    if (foundTypes.TryGetValue(containmentRelationshipTypeName, out var containmentRelationshipType) || 
+                        (containmentRelationshipType = ReflectionHelper.FindType(containmentRelationshipTypeName, exchangeDataType, foundTypes)) != null)
+                    {
+                        var containmentRelationship = Activator.CreateInstance(containmentRelationshipType);
+                        rootAddChildMethod.Invoke(rootAsset, new object[] { elementAsset, containmentRelationship });
+                        diagnostics.Add("  ✓ Linked Element's InstanceAsset to RootAsset");
+                    }
+                }
+            }
+            
+            // Find or create DesignAsset
+            object designAsset = null;
+            var elementAssetChildNodesProp = elementAssetType.GetProperty("ChildNodes", BindingFlags.Public | BindingFlags.Instance);
+            if (elementAssetChildNodesProp != null)
+            {
+                var elementChildNodes = elementAssetChildNodesProp.GetValue(elementAsset) as System.Collections.IEnumerable;
+                if (elementChildNodes != null)
+                {
+                    foreach (var childNodeRel in elementChildNodes)
+                    {
+                        var nodeProp = childNodeRel.GetType().GetProperty("Node", BindingFlags.Public | BindingFlags.Instance);
+                        if (nodeProp != null)
+                        {
+                            var node = nodeProp.GetValue(childNodeRel);
+                            if (node != null && designAssetType.IsAssignableFrom(node.GetType()))
+                            {
+                                var relationshipProp = childNodeRel.GetType().GetProperty("Relationship", BindingFlags.Public | BindingFlags.Instance);
+                                if (relationshipProp != null)
+                                {
+                                    var relationship = relationshipProp.GetValue(childNodeRel);
+                                    if (relationship != null)
+                                    {
+                                        var modelStructureProp = relationship.GetType().GetProperty("ModelStructure", BindingFlags.Public | BindingFlags.Instance);
+                                        var modelStructure = modelStructureProp?.GetValue(relationship);
+                                        if (modelStructure != null)
+                                        {
+                                            designAsset = node;
+                                            var idProp = node.GetType().GetProperty("Id", BindingFlags.Public | BindingFlags.Instance);
+                                            var existingId = idProp?.GetValue(node)?.ToString() ?? "N/A";
+                                            diagnostics.Add($"  ✓ Found existing DesignAsset (ID: {existingId}) - will reuse it");
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // Create DesignAsset if not found
+            if (designAsset == null)
+            {
+                diagnostics.Add("  No existing DesignAsset found - creating new one...");
+                var designAssetId = Guid.NewGuid().ToString();
+                designAsset = ReflectionHelper.CreateInstanceWithId(designAssetType, designAssetId, foundTypes, diagnostics);
+                
+                var objectInfoProp = designAssetType.GetProperty("ObjectInfo", BindingFlags.Public | BindingFlags.Instance);
+                if (objectInfoProp != null)
+                {
+                    var objectInfo = CreateObjectInfo(elementName, foundTypes, exchangeDataType, diagnostics);
+                    if (objectInfo != null)
+                    {
+                        objectInfoProp.SetValue(designAsset, objectInfo);
+                    }
+                }
+                
+                var exchangeDataAddMethod = exchangeDataType.GetMethod("Add", BindingFlags.Public | BindingFlags.Instance);
+                if (exchangeDataAddMethod != null)
+                {
+                    exchangeDataAddMethod.Invoke(exchangeData, new object[] { designAsset });
+                }
+                
+                // Remove any existing ReferenceRelationships with Type but not ModelStructure
+                var elementAssetChildNodesPropForRemoval = elementAssetType.GetProperty("ChildNodes", BindingFlags.Public | BindingFlags.Instance);
+                if (elementAssetChildNodesPropForRemoval != null)
+                {
+                    var elementChildNodes = elementAssetChildNodesPropForRemoval.GetValue(elementAsset) as System.Collections.IEnumerable;
+                    if (elementChildNodes != null)
+                    {
+                        var childNodesList = elementChildNodes.Cast<object>().ToList();
+                        const string referenceRelationshipTypeName = "Autodesk.DataExchange.SchemaObjects.Relationships.ReferenceRelationship";
+                        if (foundTypes.TryGetValue(referenceRelationshipTypeName, out var referenceRelationshipType) || 
+                            (referenceRelationshipType = ReflectionHelper.FindType(referenceRelationshipTypeName, exchangeDataType, foundTypes)) != null)
+                        {
+                            var removeChildMethod = elementAssetType.GetMethod("RemoveChild", BindingFlags.Public | BindingFlags.Instance, null, new[] { typeof(int) }, null);
+                            if (removeChildMethod != null)
+                            {
+                                var indicesToRemove = new List<int>();
+                                for (int i = 0; i < childNodesList.Count; i++)
+                                {
+                                    var childNodeRel = childNodesList[i];
+                                    var relationshipProp = childNodeRel.GetType().GetProperty("Relationship", BindingFlags.Public | BindingFlags.Instance);
+                                    if (relationshipProp != null)
+                                    {
+                                        var relationship = relationshipProp.GetValue(childNodeRel);
+                                        if (relationship != null && referenceRelationshipType.IsAssignableFrom(relationship.GetType()))
+                                        {
+                                            var typeProperty = relationship.GetType().GetProperty("Type", BindingFlags.Public | BindingFlags.Instance);
+                                            var modelStructureProperty = relationship.GetType().GetProperty("ModelStructure", BindingFlags.Public | BindingFlags.Instance);
+                                            
+                                            bool hasType = typeProperty != null && typeProperty.GetValue(relationship) != null;
+                                            var modelStructure = modelStructureProperty?.GetValue(relationship);
+                                            bool hasModelStructure = modelStructure != null;
+                                            
+                                            if (hasType && !hasModelStructure)
+                                            {
+                                                indicesToRemove.Add(i);
+                                            }
+                                        }
+                                    }
+                                }
+                                
+                                for (int i = indicesToRemove.Count - 1; i >= 0; i--)
+                                {
+                                    removeChildMethod.Invoke(elementAsset, new object[] { indicesToRemove[i] });
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                // Link DesignAsset to Element's InstanceAsset using ReferenceRelationship with ModelStructure
+                var elementAddChildMethod = elementAssetType.GetMethod("AddChild", BindingFlags.Public | BindingFlags.Instance);
+                if (elementAddChildMethod != null)
+                {
+                    const string referenceRelationshipTypeName = "Autodesk.DataExchange.SchemaObjects.Relationships.ReferenceRelationship";
+                    if (foundTypes.TryGetValue(referenceRelationshipTypeName, out var referenceRelationshipType) || 
+                        (referenceRelationshipType = ReflectionHelper.FindType(referenceRelationshipTypeName, exchangeDataType, foundTypes)) != null)
+                    {
+                        var referenceRelationship = Activator.CreateInstance(referenceRelationshipType);
+                        var modelStructureProperty = referenceRelationshipType.GetProperty("ModelStructure", BindingFlags.Public | BindingFlags.Instance);
+                        if (modelStructureProperty != null)
+                        {
+                            const string modelStructureTypeName = "Autodesk.DataExchange.SchemaObjects.Components.ModelStructure";
+                            if (foundTypes.TryGetValue(modelStructureTypeName, out var modelStructureType) || 
+                                (modelStructureType = ReflectionHelper.FindType(modelStructureTypeName, exchangeDataType, foundTypes)) != null)
+                            {
+                                var modelStructure = Activator.CreateInstance(modelStructureType);
+                                var valueProperty = modelStructureType.GetProperty("Value", BindingFlags.Public | BindingFlags.Instance);
+                                if (valueProperty != null)
+                                {
+                                    valueProperty.SetValue(modelStructure, true);
+                                }
+                                modelStructureProperty.SetValue(referenceRelationship, modelStructure);
+                                diagnostics.Add($"  ✓ Set ModelStructure.Value = true on ReferenceRelationship");
+                            }
+                        }
+                        
+                        elementAddChildMethod.Invoke(elementAsset, new object[] { designAsset, referenceRelationship });
+                        var designAssetIdProp = designAsset.GetType().GetProperty("Id", BindingFlags.Public | BindingFlags.Instance);
+                        var linkedDesignAssetId = designAssetIdProp?.GetValue(designAsset)?.ToString() ?? "N/A";
+                        diagnostics.Add($"  ✓ Created and linked DesignAsset (ID: {linkedDesignAssetId}) to Element's InstanceAsset with ModelStructure");
+                    }
+                }
+            }
+
+            // Add ALL GeometryAssets to DesignAsset using ContainmentRelationship
+            if (designAsset != null)
+            {
+                var addChildMethod = designAsset.GetType().GetMethod("AddChild", BindingFlags.Public | BindingFlags.Instance);
+                if (addChildMethod != null)
+                {
+                    const string containmentRelationshipTypeName = "Autodesk.DataExchange.SchemaObjects.Relationships.ContainmentRelationship";
+                    if (foundTypes.TryGetValue(containmentRelationshipTypeName, out var containmentRelationshipType) || 
+                        (containmentRelationshipType = ReflectionHelper.FindType(containmentRelationshipTypeName, exchangeDataType, foundTypes)) != null)
+                    {
+                        foreach (var (geometryAsset, geometryAssetType, geometryAssetId) in geometryAssets)
+                        {
+                            var containmentRelationship = Activator.CreateInstance(containmentRelationshipType);
+                            addChildMethod.Invoke(designAsset, new object[] { geometryAsset, containmentRelationship });
+                        }
+                        diagnostics.Add($"✓ Added {geometryAssets.Count} GeometryAsset(s) to DesignAsset using ContainmentRelationship");
+                        diagnostics.Add($"✓ Complete hierarchy: RootAsset -> InstanceAsset -> DesignAsset -> {geometryAssets.Count} GeometryAsset(s)");
                     }
                     else
                     {
@@ -2264,7 +2715,18 @@ END-ISO-10303-21;
             
             diagnostics.Add($"  Found {geometryAssetIdToSmbPath.Count} GeometryAsset->SMB mapping(s) for this exchange");
             
-            var assetInfos = GetAllAssetInfosWithTranslatedGeometryPathForSMB(client, clientType, exchangeData, exchangeDataType, identifier, fulfillmentId, geometryAssetIdToSmbPath, diagnostics);
+            // Create geometry count dictionary from static mapping
+            var geometryAssetIdToGeometryCount = new Dictionary<string, int>();
+            foreach (var kvp in geometryAssetIdToGeometryCountMapping)
+            {
+                if (kvp.Key.StartsWith($"{exchangeId}_", StringComparison.OrdinalIgnoreCase))
+                {
+                    var geometryAssetId = kvp.Key.Substring(exchangeId.Length + 1);
+                    geometryAssetIdToGeometryCount[geometryAssetId] = kvp.Value;
+                }
+            }
+            
+            var assetInfos = GetAllAssetInfosWithTranslatedGeometryPathForSMB(client, clientType, exchangeData, exchangeDataType, identifier, fulfillmentId, geometryAssetIdToSmbPath, geometryAssetIdToGeometryCount, diagnostics);
             var assetInfosList = assetInfos.Cast<object>().ToList();
             diagnostics.Add($"  ✓ Got {assetInfosList.Count} AssetInfo(s)");
             return assetInfosList;
@@ -3128,33 +3590,143 @@ END-ISO-10303-21;
                 var foundTypes = TimeOperation("FindRequiredTypes (reflection - type discovery)", 
                     () => FindRequiredTypes(exchangeDataType, diagnostics), diagnostics);
 
-                // Create GeometryAsset
-                diagnostics.Add($"\nCreating GeometryAsset for SMB file (BRep format)...");
+                // Load SMB file to check how many geometries it contains
+                diagnostics.Add($"\nChecking SMB file for geometry count...");
                 diagnostics.Add($"  SMB file path: {smbFilePath}");
                 diagnostics.Add($"  File exists: {File.Exists(smbFilePath)}");
-                var (geometryAsset, geometryAssetType, geometryAssetId) = TimeOperation("CreateGeometryAsset (reflection)", 
-                    () => CreateGeometryAsset(exchangeDataType, foundTypes, diagnostics), diagnostics);
-                TimeOperation("SetGeometryAssetUnits", 
-                    () => SetGeometryAssetUnits(geometryAsset, geometryAssetType, diagnostics), diagnostics);
+                
+                var geometriesInFile = LoadGeometriesFromSMBFile(smbFilePath, unit, diagnostics);
+                var geometryCount = geometriesInFile.Count;
+                diagnostics.Add($"  ✓ Found {geometryCount} geometry object(s) in SMB file");
+                
+                if (geometryCount == 0)
+                {
+                    throw new InvalidOperationException("SMB file contains no geometries");
+                }
 
-                // Create GeometryWrapper and GeometryComponent
-                var geometryWrapper = TimeOperation("CreateGeometryWrapper (reflection)", 
-                    () => CreateGeometryWrapper(foundTypes, exchangeDataType, diagnostics), diagnostics);
-                TimeOperation("CreateGeometryComponent (reflection)", 
-                    () => CreateGeometryComponent(geometryAsset, geometryAssetType, geometryWrapper, foundTypes, exchangeDataType, diagnostics), diagnostics);
+                // The SDK architecture requires one GeometryAsset per geometry
+                // If the SMB file contains multiple geometries, we need to split them into separate SMB files
+                // Each geometry gets its own SMB file and GeometryAsset
+                var smbFilesToUpload = new List<string>();
+                
+                if (geometryCount > 1)
+                {
+                    diagnostics.Add($"  SMB file contains {geometryCount} geometries - splitting into separate SMB files...");
+                    diagnostics.Add($"  (SDK requires one GeometryAsset per geometry, each with its own SMB file)");
+                    
+                    var tempDir = Path.Combine(Path.GetTempPath(), "DataExchangeNodes", "SplitGeometries");
+                    if (!Directory.Exists(tempDir))
+                        Directory.CreateDirectory(tempDir);
+                    
+                    var baseFileName = Path.GetFileNameWithoutExtension(smbFilePath);
+                    var mmPerUnit = ConvertUnitToMmPerUnit(unit);
+                    var geometryType = typeof(Geometry);
+                    
+                    // Find ExportToSMB method
+                    var allMethods = geometryType.GetMethods(BindingFlags.Public | BindingFlags.Static);
+                    var exportMethod = allMethods.FirstOrDefault(m => 
+                        m.Name == "ExportToSMB" &&
+                        m.GetParameters().Length == 3 &&
+                        m.GetParameters()[0].ParameterType.Name.Contains("IEnumerable") &&
+                        m.GetParameters()[1].ParameterType == typeof(string) &&
+                        m.GetParameters()[2].ParameterType == typeof(double));
+                    
+                    if (exportMethod == null)
+                    {
+                        exportMethod = allMethods.FirstOrDefault(m =>
+                            m.Name == "ExportToSMB" &&
+                            m.GetParameters().Length == 3 &&
+                            m.GetParameters()[1].ParameterType == typeof(string) &&
+                            m.GetParameters()[2].ParameterType == typeof(double));
+                    }
+                    
+                    if (exportMethod != null)
+                    {
+                        for (int i = 0; i < geometryCount; i++)
+                        {
+                            var singleGeometrySMB = Path.Combine(tempDir, $"{baseFileName}_geometry_{i + 1}_{Guid.NewGuid():N}.smb");
+                            var singleGeometry = new List<Geometry> { geometriesInFile[i] };
+                            
+                            try
+                            {
+                                exportMethod.Invoke(null, new object[] { singleGeometry, singleGeometrySMB, mmPerUnit });
+                                if (File.Exists(singleGeometrySMB))
+                                {
+                                    smbFilesToUpload.Add(singleGeometrySMB);
+                                    diagnostics.Add($"    ✓ Created SMB file for geometry {i + 1}: {Path.GetFileName(singleGeometrySMB)}");
+                                }
+                                else
+                                {
+                                    diagnostics.Add($"    ⚠️ ExportToSMB succeeded but file not found: {singleGeometrySMB}");
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                diagnostics.Add($"    ⚠️ Failed to export geometry {i + 1} to SMB: {ex.Message}");
+                            }
+                        }
+                        diagnostics.Add($"  ✓ Split into {smbFilesToUpload.Count} SMB file(s)");
+                    }
+                    else
+                    {
+                        diagnostics.Add($"  ⚠️ ExportToSMB method not found - cannot split geometries");
+                        diagnostics.Add($"  ⚠️ Will upload as single file (may only upload first geometry)");
+                        smbFilesToUpload.Add(smbFilePath);
+                    }
+                }
+                else
+                {
+                    // Single geometry - use original file
+                    smbFilesToUpload.Add(smbFilePath);
+                    diagnostics.Add($"  Using original SMB file (single geometry)");
+                }
 
-                // Add GeometryAsset to ExchangeData
-                TimeOperation("AddGeometryAssetToExchangeData", 
-                    () => AddGeometryAssetToExchangeData(geometryAsset, exchangeData, exchangeDataType, smbFilePath, foundTypes, diagnostics), diagnostics);
+                // Create one GeometryAsset per SMB file
+                var allGeometryAssets = new List<(object geometryAsset, Type geometryAssetType, string geometryAssetId)>();
+                
+                for (int i = 0; i < smbFilesToUpload.Count; i++)
+                {
+                    var currentSmbFile = smbFilesToUpload[i];
+                    var baseFileName = Path.GetFileNameWithoutExtension(smbFilePath);
+                    var geometryName = smbFilesToUpload.Count > 1 
+                        ? $"{baseFileName}_geometry_{i + 1}" 
+                        : baseFileName;
+                    
+                    diagnostics.Add($"\nCreating GeometryAsset {i + 1} of {smbFilesToUpload.Count} for SMB file (BRep format)...");
+                    diagnostics.Add($"  SMB file: {Path.GetFileName(currentSmbFile)}");
+                    diagnostics.Add($"  Geometry name: {geometryName}");
+                    
+                    var (geometryAsset, geometryAssetType, geometryAssetId) = TimeOperation($"CreateGeometryAsset_{i + 1} (reflection)", 
+                        () => CreateGeometryAsset(exchangeDataType, foundTypes, diagnostics), diagnostics);
+                    
+                    TimeOperation($"SetGeometryAssetUnits_{i + 1}", 
+                        () => SetGeometryAssetUnits(geometryAsset, geometryAssetType, diagnostics), diagnostics);
 
-                // Add GeometryAsset to UnsavedGeometryMapping (required for full SDK flow)
-                // Pass exchangeId for mapping storage
-                TimeOperation("AddGeometryAssetToUnsavedMapping", 
-                    () => AddGeometryAssetToUnsavedMapping(geometryAsset, exchangeData, exchangeDataType, smbFilePath, identifier.ExchangeId, diagnostics), diagnostics);
+                    // Create GeometryWrapper and GeometryComponent
+                    var geometryWrapper = TimeOperation($"CreateGeometryWrapper_{i + 1} (reflection)", 
+                        () => CreateGeometryWrapper(foundTypes, exchangeDataType, diagnostics), diagnostics);
+                    TimeOperation($"CreateGeometryComponent_{i + 1} (reflection)", 
+                        () => CreateGeometryComponent(geometryAsset, geometryAssetType, geometryWrapper, foundTypes, exchangeDataType, geometryName, diagnostics), diagnostics);
 
-                // Setup DesignAsset and relationships
-                TimeOperation("SetupDesignAssetAndRelationships (complex reflection)", 
-                    () => SetupDesignAssetAndRelationships(element, geometryAsset, geometryAssetType, exchangeData, exchangeDataType, foundTypes, elementName, diagnostics), diagnostics);
+                    // Add GeometryAsset to ExchangeData
+                    TimeOperation($"AddGeometryAssetToExchangeData_{i + 1}", 
+                        () => AddGeometryAssetToExchangeData(geometryAsset, exchangeData, exchangeDataType, currentSmbFile, foundTypes, geometryName, diagnostics), diagnostics);
+
+                    // Add GeometryAsset to UnsavedGeometryMapping (required for full SDK flow)
+                    // Pass geometryCount=1 since each file now contains one geometry
+                    TimeOperation($"AddGeometryAssetToUnsavedMapping_{i + 1}", 
+                        () => AddGeometryAssetToUnsavedMapping(geometryAsset, exchangeData, exchangeDataType, currentSmbFile, identifier.ExchangeId, 1, diagnostics), diagnostics);
+
+                    allGeometryAssets.Add((geometryAsset, geometryAssetType, geometryAssetId));
+                }
+
+                // Setup DesignAsset and relationships for all GeometryAssets
+                // All GeometryAssets will be added to the same DesignAsset
+                if (allGeometryAssets.Count > 0)
+                {
+                    TimeOperation("SetupDesignAssetAndRelationships (complex reflection)", 
+                        () => SetupDesignAssetAndRelationshipsForMultipleGeometries(element, allGeometryAssets, exchangeData, exchangeDataType, foundTypes, elementName, diagnostics), diagnostics);
+                }
 
                 // Full SyncExchangeDataAsync flow for SMB
                 // This follows the complete SDK flow, ensuring geometry is properly processed and visible
@@ -3172,25 +3744,36 @@ END-ISO-10303-21;
                     // It can be enabled manually if needed, but is typically not required
                     // The server will generate viewables automatically
                     
-                    // Check if BinaryReference was set
-                    var binaryRefProp = geometryAssetType.GetProperty("BinaryReference", BindingFlags.Public | BindingFlags.Instance);
-                    if (binaryRefProp != null)
+                    // Check if BinaryReference was set for all GeometryAssets
+                    int successCount = 0;
+                    for (int i = 0; i < allGeometryAssets.Count; i++)
                     {
-                        var binaryRef = binaryRefProp.GetValue(geometryAsset);
-                        if (binaryRef != null)
+                        var (checkGeometryAsset, checkGeometryAssetType, checkGeometryAssetId) = allGeometryAssets[i];
+                        var binaryRefProp = checkGeometryAssetType.GetProperty("BinaryReference", BindingFlags.Public | BindingFlags.Instance);
+                        if (binaryRefProp != null)
                         {
-                            diagnostics.Add($"  ✓ BinaryReference is set after full sync flow");
-                            success = true;
+                            var binaryRef = binaryRefProp.GetValue(checkGeometryAsset);
+                            if (binaryRef != null)
+                            {
+                                successCount++;
+                                diagnostics.Add($"  ✓ BinaryReference is set for GeometryAsset {i + 1} (ID: {checkGeometryAssetId})");
+                            }
+                            else
+                            {
+                                diagnostics.Add($"  ⚠️ BinaryReference still null for GeometryAsset {i + 1} (ID: {checkGeometryAssetId})");
+                            }
                         }
-                        else
-                        {
-                            diagnostics.Add($"  ⚠️ BinaryReference still null after full sync flow");
-                            success = true; // Still mark as success since the flow completed
-                        }
+                    }
+                    
+                    if (successCount > 0)
+                    {
+                        diagnostics.Add($"  ✓ BinaryReference is set for {successCount} of {allGeometryAssets.Count} GeometryAsset(s) after full sync flow");
+                        success = true;
                     }
                     else
                     {
-                        success = true;
+                        diagnostics.Add($"  ⚠️ BinaryReference not set for any GeometryAsset, but flow completed");
+                        success = true; // Still mark as success since the flow completed
                     }
                 }
                 catch (Exception ex)
@@ -3203,9 +3786,13 @@ END-ISO-10303-21;
                     throw; // Re-throw to be caught by outer try-catch
                 }
                 
-                // Inspect results
-                TimeOperation("InspectGeometryAsset", 
-                    () => InspectGeometryAsset(geometryAsset, geometryAssetType, exchangeData, exchangeDataType, diagnostics), diagnostics);
+                // Inspect results for all GeometryAssets
+                for (int i = 0; i < allGeometryAssets.Count; i++)
+                {
+                    var (inspectGeometryAsset, inspectGeometryAssetType, inspectGeometryAssetId) = allGeometryAssets[i];
+                    TimeOperation($"InspectGeometryAsset_{i + 1}", 
+                        () => InspectGeometryAsset(inspectGeometryAsset, inspectGeometryAssetType, exchangeData, exchangeDataType, diagnostics), diagnostics);
+                }
             }
             catch (Exception ex)
             {
