@@ -7,6 +7,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using Autodesk.DesignScript.Geometry;
 using Autodesk.DesignScript.Runtime;
+using DataExchangeNodes.DataExchange;
+using Dynamo.Graph.Nodes;
 
 // Required for IntPtr and ACIS pointer operations
 using System.Runtime.InteropServices;
@@ -537,9 +539,11 @@ namespace DataExchangeNodes.DataExchange
         [MultiReturn(new[] { "geometries", "log", "success" })]
         public static Dictionary<string, object> Load(
             Exchange exchange,
-            string unit = "kUnitType_CentiMeter")
+            string unit = "kUnitType_CentiMeter",
+            [DefaultArgument("")] string downloadDirectory = "")
         {
             var geometries = new List<Geometry>();
+            var smbFilePaths = new List<string>();
             var diagnostics = new List<string>();
             bool success = false;
 
@@ -572,7 +576,8 @@ namespace DataExchangeNodes.DataExchange
                 // Download ALL SMB files from DataExchange (there may be multiple GeometryAssets)
                 // Note: Using .Result blocks the thread, but Dynamo ZeroTouch nodes are synchronous
                 // This is acceptable for now as Dynamo will handle the blocking appropriately
-                var smbFilePaths = DownloadAllSMBFiles(exchange, accessToken, diagnostics).GetAwaiter().GetResult();
+                var resolvedDownloadDir = ResolveDownloadDirectory(downloadDirectory, diagnostics);
+                smbFilePaths = DownloadAllSMBFiles(exchange, accessToken, diagnostics, resolvedDownloadDir).GetAwaiter().GetResult();
                 diagnostics.Add($"✓ Downloaded {smbFilePaths.Count} SMB file(s)");
 
                 // Load geometry from ALL SMB files using ProtoGeometry SMB APIs
@@ -605,6 +610,7 @@ namespace DataExchangeNodes.DataExchange
             return new Dictionary<string, object>
             {
                 { "geometries", geometries },
+                { "smbFilePaths", smbFilePaths },
                 { "log", string.Join("\n", diagnostics) },
                 { "success", success }
             };
@@ -617,14 +623,17 @@ namespace DataExchangeNodes.DataExchange
         private static async Task<List<string>> DownloadAllSMBFiles(
             Exchange exchange,
             string accessToken,
-            List<string> diagnostics)
+            List<string> diagnostics,
+            string downloadDirectory)
         {
             var smbFilePaths = new List<string>();
             
             try
             {
-                // Create temp directory for SMB files
-                var tempDir = Path.Combine(Path.GetTempPath(), "DataExchangeNodes");
+                // Use provided directory (already resolved), or fallback to temp
+                var tempDir = string.IsNullOrEmpty(downloadDirectory)
+                    ? Path.Combine(Path.GetTempPath(), "DataExchangeNodes")
+                    : downloadDirectory;
                 if (!Directory.Exists(tempDir))
                     Directory.CreateDirectory(tempDir);
 
@@ -658,6 +667,20 @@ namespace DataExchangeNodes.DataExchange
                 diagnostics.Add($"✗ Failed to download SMB files: {ex.Message}");
                 throw new IOException($"Failed to download SMB files from DataExchange: {ex.Message}", ex);
             }
+        }
+
+        private static string ResolveDownloadDirectory(string downloadDirectory, List<string> diagnostics)
+        {
+            if (string.IsNullOrEmpty(downloadDirectory))
+            {
+                var tempDir = Path.Combine(Path.GetTempPath(), "DataExchangeNodes");
+                diagnostics?.Add($"Using temp download directory: {tempDir}");
+                return tempDir;
+            }
+
+            var resolved = Path.GetFullPath(downloadDirectory);
+            diagnostics?.Add($"Using download directory: {resolved}");
+            return resolved;
         }
 
         /// <summary>

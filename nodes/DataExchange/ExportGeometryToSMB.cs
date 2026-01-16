@@ -13,6 +13,8 @@ using Autodesk.DataExchange.DataModels;
 using Autodesk.DataExchange.Core.Models;
 using Autodesk.DataExchange.Interface;
 using Autodesk.DataExchange.SchemaObjects.Units;
+using DataExchangeNodes.DataExchange;
+using Dynamo.Graph.Nodes;
 
 namespace DataExchangeNodes.DataExchange
 {
@@ -692,6 +694,48 @@ namespace DataExchangeNodes.DataExchange
             else
                 return 10.0; // Default to cm
         }
+
+        private static bool IsUsableGeometry(Geometry geometry, List<string> diagnostics)
+        {
+            if (geometry == null)
+                return false;
+
+            try
+            {
+                var isDisposedProp = geometry.GetType().GetProperty("IsDisposed", BindingFlags.Public | BindingFlags.Instance);
+                if (isDisposedProp != null && isDisposedProp.PropertyType == typeof(bool))
+                {
+                    var isDisposed = (bool)isDisposedProp.GetValue(geometry);
+                    if (isDisposed)
+                    {
+                        diagnostics?.Add("⚠️ Skipping disposed geometry");
+                        return false;
+                    }
+                }
+            }
+            catch
+            {
+                // If we can't inspect disposal state, assume it's usable.
+            }
+
+            // Try a lightweight access to catch invalid native pointers
+            try
+            {
+                var bbox = geometry.BoundingBox;
+                if (bbox == null)
+                {
+                    diagnostics?.Add("⚠️ Skipping geometry with null BoundingBox");
+                    return false;
+                }
+            }
+            catch (Exception ex)
+            {
+                diagnostics?.Add($"⚠️ Skipping invalid geometry: {ex.GetType().Name}: {ex.Message}");
+                return false;
+            }
+
+            return true;
+        }
         
         /// <summary>
         /// Exports Dynamo geometry objects to an SMB file.
@@ -721,6 +765,28 @@ namespace DataExchangeNodes.DataExchange
                 if (geometries == null || geometries.Count == 0)
                 {
                     throw new ArgumentException("Geometries list cannot be null or empty", nameof(geometries));
+                }
+
+                // Filter out null/invalid geometries to avoid native pointer errors
+                int originalCount = geometries.Count;
+                var filtered = new List<Geometry>(geometries.Count);
+                foreach (var geometry in geometries)
+                {
+                    if (IsUsableGeometry(geometry, diagnostics))
+                    {
+                        filtered.Add(geometry);
+                    }
+                }
+                geometries = filtered;
+
+                if (geometries.Count != originalCount)
+                {
+                    diagnostics.Add($"⚠️ Filtered {originalCount - geometries.Count} null/invalid geometry object(s)");
+                }
+
+                if (geometries.Count == 0)
+                {
+                    throw new ArgumentException("All input geometries are null or invalid", nameof(geometries));
                 }
 
                 // Convert unit to mmPerUnit
