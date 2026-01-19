@@ -9,6 +9,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Autodesk.DesignScript.Geometry;
 using Autodesk.DesignScript.Runtime;
+using Autodesk.DataExchange;
 using Autodesk.DataExchange.DataModels;
 using Autodesk.DataExchange.Core.Models;
 using Autodesk.DataExchange.Interface;
@@ -28,7 +29,7 @@ namespace DataExchangeNodes.DataExchange
         /// </summary>
         private static class ReflectionHelper
         {
-            /// <summary>
+            // / <summary>
             /// Gets a method from a type using reflection
             /// </summary>
             public static MethodInfo GetMethod(Type type, string methodName, BindingFlags flags, Type[] parameterTypes = null)
@@ -962,76 +963,6 @@ namespace DataExchangeNodes.DataExchange
         /// <summary>
         /// Tries to get the Client instance from various sources (reused from LoadGeometryFromExchange)
         /// </summary>
-        private static object TryGetClientInstance(List<string> diagnostics)
-        {
-            object client = null;
-            
-            // Method 1: Try to get from SelectExchangeElementsViewCustomization
-            try
-            {
-                var viewCustomizationType = Type.GetType("DataExchangeNodes.NodeViews.DataExchange.SelectExchangeElementsViewCustomization, ExchangeNodes.NodeViews");
-                if (viewCustomizationType != null)
-                {
-                    var clientProperty = viewCustomizationType.GetProperty("ClientInstance", BindingFlags.Public | BindingFlags.Static);
-                    if (clientProperty != null)
-                    {
-                        client = clientProperty.GetValue(null);
-                        if (client != null)
-                        {
-                            diagnostics?.Add($"✓ Found Client instance via SelectExchangeElementsViewCustomization");
-                        }
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                diagnostics?.Add($"  ⚠️ Could not access ClientInstance property: {ex.Message}");
-            }
-
-            // Method 2: Try to find Client type directly and look for static instances
-            if (client == null)
-            {
-                try
-                {
-                    foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
-                    {
-                        try
-                        {
-                            var foundClientType = assembly.GetTypes().FirstOrDefault(t => 
-                                t.Name == "Client" && 
-                                t.Namespace != null && 
-                                t.Namespace.Contains("DataExchange"));
-                            
-                            if (foundClientType != null)
-                            {
-                                diagnostics?.Add($"  Found Client type: {foundClientType.FullName}");
-                                var staticFields = foundClientType.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
-                                var instanceField = staticFields.FirstOrDefault(f => 
-                                    f.FieldType == foundClientType || 
-                                    f.FieldType.IsAssignableFrom(foundClientType));
-                                
-                                if (instanceField != null)
-                                {
-                                    client = instanceField.GetValue(null);
-                                    if (client != null)
-                                    {
-                                        diagnostics?.Add($"  ✓ Found Client via static field: {instanceField.Name}");
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                        catch { /* Skip assemblies we can't inspect */ }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    diagnostics?.Add($"  ⚠️ Could not find Client via type search: {ex.Message}");
-                }
-            }
-
-            return client;
-        }
         
         /// <summary>
         /// Uploads an SMB file to a DataExchange by creating an element with geometry.
@@ -1166,11 +1097,15 @@ namespace DataExchangeNodes.DataExchange
                 }
             }
 
-            // If ElementDataModel is null, this is a new/empty exchange - create one from scratch
+            // If ElementDataModel is null, try to create one - but WARNING: this creates an EMPTY model
+            // If the exchange already has data, creating a new model will WIPE IT OUT when we save!
+            // So we should only create if this is truly a new/empty exchange
             if (elementDataModel == null)
             {
-                diagnostics.Add("  ⚠️ ElementDataModel is null - this is a new/empty exchange");
-                diagnostics.Add("  Creating new ElementDataModel from scratch...");
+                diagnostics.Add("  ⚠️ ElementDataModel is null - Value property returned null");
+                diagnostics.Add("  ⚠️ WARNING: Creating a new ElementDataModel will create an EMPTY model.");
+                diagnostics.Add("  ⚠️ If this exchange already has data, it will be LOST when we upload!");
+                diagnostics.Add("  Attempting to create ElementDataModel - this should load existing data if the exchange has any...");
                 
                 // Try to find ElementDataModel.Create static method
                 var elementDataModelType = typeof(ElementDataModel);
@@ -1181,34 +1116,82 @@ namespace DataExchangeNodes.DataExchange
                     var parameters = createMethod.GetParameters();
                     diagnostics.Add($"  Found Create method with parameters: {string.Join(", ", parameters.Select(p => p.ParameterType.Name))}");
                     
-                    // Try Create(IClient) - most common case
-                    // Check if parameter type (IClient interface) is assignable from clientType (i.e., client implements IClient)
-                    if (parameters.Length == 1 && parameters[0].ParameterType.IsAssignableFrom(clientType))
+                    // Try Create(IClient, DataExchangeIdentifier) FIRST - this should load existing data
+                    if (parameters.Length == 2 && 
+                        parameters[0].ParameterType.IsAssignableFrom(clientType) &&
+                        parameters[1].ParameterType == typeof(DataExchangeIdentifier))
                     {
-                        elementDataModel = (ElementDataModel)createMethod.Invoke(null, new object[] { client });
-                        diagnostics.Add($"  ✓ Created ElementDataModel using Create(IClient)");
+                        try
+                        {
+                            elementDataModel = (ElementDataModel)createMethod.Invoke(null, new object[] { client, identifier });
+                            diagnostics.Add($"  ✓ Created ElementDataModel using Create(IClient, DataExchangeIdentifier)");
+                            diagnostics.Add($"  ⚠️ NOTE: If exchange has existing data, verify it was loaded before proceeding!");
+                        }
+                        catch (Exception ex)
+                        {
+                            diagnostics.Add($"  ⚠️ Create(IClient, DataExchangeIdentifier) failed: {ex.Message}");
+                        }
                     }
-                    // Try Create(DataExchangeIdentifier)
+                    // Try Create(DataExchangeIdentifier) - should also load existing data
                     else if (parameters.Length == 1 && parameters[0].ParameterType == typeof(DataExchangeIdentifier))
                     {
-                        elementDataModel = (ElementDataModel)createMethod.Invoke(null, new object[] { identifier });
-                        diagnostics.Add($"  ✓ Created ElementDataModel using Create(DataExchangeIdentifier)");
+                        try
+                        {
+                            elementDataModel = (ElementDataModel)createMethod.Invoke(null, new object[] { identifier });
+                            diagnostics.Add($"  ✓ Created ElementDataModel using Create(DataExchangeIdentifier)");
+                            diagnostics.Add($"  ⚠️ NOTE: If exchange has existing data, verify it was loaded before proceeding!");
+                        }
+                        catch (Exception ex)
+                        {
+                            diagnostics.Add($"  ⚠️ Create(DataExchangeIdentifier) failed: {ex.Message}");
+                        }
                     }
-                    // Try Create(IClient, DataExchangeIdentifier)
-                    else if (parameters.Length == 2 && 
-                             parameters[0].ParameterType.IsAssignableFrom(clientType) &&
-                             parameters[1].ParameterType == typeof(DataExchangeIdentifier))
+                    // Try Create(IClient) - most common case (but might not load existing data)
+                    if (elementDataModel == null && parameters.Length == 1 && parameters[0].ParameterType.IsAssignableFrom(clientType))
                     {
-                        elementDataModel = (ElementDataModel)createMethod.Invoke(null, new object[] { client, identifier });
-                        diagnostics.Add($"  ✓ Created ElementDataModel using Create(IClient, DataExchangeIdentifier)");
+                        try
+                        {
+                            elementDataModel = (ElementDataModel)createMethod.Invoke(null, new object[] { client });
+                            diagnostics.Add($"  ✓ Created ElementDataModel using Create(IClient)");
+                            diagnostics.Add($"  ⚠️ WARNING: Create(IClient) may not load existing exchange data!");
+                            diagnostics.Add($"  ⚠️ Setting ExchangeIdentifier to ensure we're working with the correct exchange...");
+                            
+                            // Try to set the identifier to ensure we're working with the right exchange
+                            var identifierProperty = elementDataModelType.GetProperty("ExchangeIdentifier", BindingFlags.Public | BindingFlags.Instance);
+                            if (identifierProperty != null && identifierProperty.CanWrite)
+                            {
+                                identifierProperty.SetValue(elementDataModel, identifier);
+                                diagnostics.Add($"  ✓ Set ExchangeIdentifier on ElementDataModel");
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            diagnostics.Add($"  ⚠️ Create(IClient) failed: {ex.Message}");
+                        }
                     }
-                    // Try parameterless Create()
-                    else if (parameters.Length == 0)
+                    // Try parameterless Create() - last resort
+                    else if (elementDataModel == null && parameters.Length == 0)
                     {
-                        elementDataModel = (ElementDataModel)createMethod.Invoke(null, null);
-                        diagnostics.Add($"  ✓ Created ElementDataModel using Create()");
+                        try
+                        {
+                            elementDataModel = (ElementDataModel)createMethod.Invoke(null, null);
+                            diagnostics.Add($"  ✓ Created ElementDataModel using Create()");
+                            diagnostics.Add($"  ⚠️ WARNING: Create() creates empty model - setting ExchangeIdentifier...");
+                            
+                            // Try to set the identifier
+                            var identifierProperty = elementDataModelType.GetProperty("ExchangeIdentifier", BindingFlags.Public | BindingFlags.Instance);
+                            if (identifierProperty != null && identifierProperty.CanWrite)
+                            {
+                                identifierProperty.SetValue(elementDataModel, identifier);
+                                diagnostics.Add($"  ✓ Set ExchangeIdentifier on ElementDataModel");
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            diagnostics.Add($"  ⚠️ Create() failed: {ex.Message}");
+                        }
                     }
-                    else
+                    else if (elementDataModel == null)
                     {
                         diagnostics.Add($"  ⚠️ Create method found but has unexpected signature: {string.Join(", ", parameters.Select(p => p.ParameterType.Name))}");
                     }
@@ -1220,8 +1203,15 @@ namespace DataExchangeNodes.DataExchange
                     var constructor = elementDataModelType.GetConstructor(new[] { typeof(DataExchangeIdentifier) });
                     if (constructor != null)
                     {
-                        elementDataModel = (ElementDataModel)constructor.Invoke(new object[] { identifier });
-                        diagnostics.Add($"  ✓ Created ElementDataModel using constructor(DataExchangeIdentifier)");
+                        try
+                        {
+                            elementDataModel = (ElementDataModel)constructor.Invoke(new object[] { identifier });
+                            diagnostics.Add($"  ✓ Created ElementDataModel using constructor(DataExchangeIdentifier)");
+                        }
+                        catch (Exception ex)
+                        {
+                            diagnostics.Add($"  ⚠️ Constructor failed: {ex.Message}");
+                        }
                     }
                 }
                 
@@ -1231,15 +1221,23 @@ namespace DataExchangeNodes.DataExchange
                     var parameterlessConstructor = elementDataModelType.GetConstructor(Type.EmptyTypes);
                     if (parameterlessConstructor != null)
                     {
-                        elementDataModel = (ElementDataModel)parameterlessConstructor.Invoke(null);
-                        diagnostics.Add($"  ✓ Created ElementDataModel using parameterless constructor");
-                        
-                        // Try to set the identifier if there's a property or method
-                        var identifierProperty = elementDataModelType.GetProperty("ExchangeIdentifier", BindingFlags.Public | BindingFlags.Instance);
-                        if (identifierProperty != null && identifierProperty.CanWrite)
+                        try
                         {
-                            identifierProperty.SetValue(elementDataModel, identifier);
-                            diagnostics.Add($"  ✓ Set ExchangeIdentifier on ElementDataModel");
+                            elementDataModel = (ElementDataModel)parameterlessConstructor.Invoke(null);
+                            diagnostics.Add($"  ✓ Created ElementDataModel using parameterless constructor");
+                            
+                            // Try to set the identifier if there's a property or method
+                            var identifierProperty = elementDataModelType.GetProperty("ExchangeIdentifier", BindingFlags.Public | BindingFlags.Instance);
+                            if (identifierProperty != null && identifierProperty.CanWrite)
+                            {
+                                identifierProperty.SetValue(elementDataModel, identifier);
+                                diagnostics.Add($"  ✓ Set ExchangeIdentifier on ElementDataModel");
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            diagnostics.Add($"  ⚠️ Parameterless constructor failed: {ex.Message}");
+                        }
                     }
                 }
             }
@@ -1251,7 +1249,6 @@ namespace DataExchangeNodes.DataExchange
                     : "No Value property";
                 throw new InvalidOperationException(
                         $"Could not extract or create ElementDataModel. Response Value was null (new exchange), and could not find Create method or suitable constructor. {valueInfo}");
-                }
             }
             else
             {
@@ -3718,11 +3715,11 @@ END-ISO-10303-21;
 
                 // Get Client instance
                 diagnostics.Add("\nGetting Client instance...");
-                var client = TimeOperation("TryGetClientInstance (reflection)", 
-                    () => TryGetClientInstance(diagnostics), diagnostics);
+                // Get Client instance using centralized DataExchangeClient
+                var client = DataExchangeClient.GetClient();
                 if (client == null)
                 {
-                    throw new InvalidOperationException("Could not find Client instance. Make sure you have selected an Exchange first.");
+                    throw new InvalidOperationException("Could not find Client instance. Make sure you have selected an Exchange first using the SelectExchangeElements node.");
                 }
                 diagnostics.Add($"✓ Found Client instance: {client.GetType().FullName}");
 

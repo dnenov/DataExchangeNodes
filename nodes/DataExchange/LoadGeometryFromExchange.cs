@@ -7,6 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Autodesk.DesignScript.Geometry;
 using Autodesk.DesignScript.Runtime;
+using Autodesk.DataExchange;
 using DataExchangeNodes.DataExchange;
 using Dynamo.Graph.Nodes;
 
@@ -696,7 +697,8 @@ namespace DataExchangeNodes.DataExchange
             try
             {
                 // Get Client instance
-                var client = TryGetClientInstance(diagnostics);
+                // Get Client instance using centralized DataExchangeClient
+                var client = DataExchangeClient.GetClient();
                 if (client == null)
                 {
                     diagnostics.Add("  ⚠️ Client instance is null - ensure SelectExchangeElements node has been used first");
@@ -770,75 +772,6 @@ namespace DataExchangeNodes.DataExchange
             }
         }
 
-        /// <summary>
-        /// Tries to get the Client instance from various sources
-        /// </summary>
-        private static object TryGetClientInstance(List<string> diagnostics)
-        {
-            object client = null;
-            
-            // Method 1: Try to get from SelectExchangeElementsViewCustomization
-            try
-            {
-                var viewCustomizationType = Type.GetType("DataExchangeNodes.NodeViews.DataExchange.SelectExchangeElementsViewCustomization, ExchangeNodes.NodeViews");
-                if (viewCustomizationType != null)
-                {
-                    var clientProperty = viewCustomizationType.GetProperty("ClientInstance", BindingFlags.Public | BindingFlags.Static);
-                    if (clientProperty != null)
-                    {
-                        client = clientProperty.GetValue(null);
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                diagnostics.Add($"  ⚠️ Could not access ClientInstance property: {ex.Message}");
-            }
-
-            // Method 2: Try to find Client type directly and look for static instances
-            if (client == null)
-            {
-                try
-                {
-                    foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
-                    {
-                        try
-                        {
-                            var foundClientType = assembly.GetTypes().FirstOrDefault(t => 
-                                t.Name == "Client" && 
-                                t.Namespace != null && 
-                                t.Namespace.Contains("DataExchange"));
-                            
-                            if (foundClientType != null)
-                            {
-                                diagnostics.Add($"  Found Client type: {foundClientType.FullName}");
-                                var staticFields = foundClientType.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
-                                var instanceField = staticFields.FirstOrDefault(f => 
-                                    f.FieldType == foundClientType || 
-                                    f.FieldType.IsAssignableFrom(foundClientType));
-                                
-                                if (instanceField != null)
-                                {
-                                    client = instanceField.GetValue(null);
-                                    if (client != null)
-                                    {
-                                        diagnostics.Add($"  Found Client via static field: {instanceField.Name}");
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                        catch { /* Skip assemblies we can't inspect */ }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    diagnostics.Add($"  ⚠️ Could not find Client via type search: {ex.Message}");
-                }
-            }
-
-            return client;
-        }
 
         // ====================================================================
         // SMB Download: Binary Data Retrieval and Conversion
@@ -1395,37 +1328,333 @@ namespace DataExchangeNodes.DataExchange
             }
 
             var taskResult = ((dynamic)elementDataModelResult).GetAwaiter().GetResult();
-            object elementDataModel = null;
-            
-            var responseType = taskResult?.GetType();
-            if (responseType != null)
+            if (taskResult == null)
             {
-                var valueProp = responseType.GetProperty("Value");
-                if (valueProp != null)
+                diagnostics.Add($"  ⚠️ GetElementDataModelAsync task result is null");
+                return results;
+            }
+
+            diagnostics.Add($"  Response type: {taskResult.GetType().FullName}");
+            
+            // Check for errors in the response first
+            var responseType = taskResult.GetType();
+            var isSuccessProp = responseType.GetProperty("IsSuccess") ?? responseType.GetProperty("Success");
+            if (isSuccessProp != null)
+            {
+                var isSuccess = (bool?)isSuccessProp.GetValue(taskResult);
+                diagnostics.Add($"  Response IsSuccess: {isSuccess}");
+                if (isSuccess == false)
                 {
-                    try
+                    var errorProp = responseType.GetProperty("Error") ?? responseType.GetProperty("Exception");
+                    if (errorProp != null)
                     {
-                        elementDataModel = valueProp.GetValue(taskResult);
+                        var error = errorProp.GetValue(taskResult);
+                        diagnostics.Add($"  ⚠️ Response indicates failure. Error: {error}");
                     }
-                    catch
+                }
+            }
+            
+            // Extract ElementDataModel from Response<ElementDataModel> (same pattern as ExportGeometryToSMB.cs)
+            object elementDataModel = null;
+            var valueProp = responseType.GetProperty("Value");
+            
+            if (valueProp != null)
+            {
+                var value = valueProp.GetValue(taskResult);
+                diagnostics.Add($"  Value property found, value type: {value?.GetType().FullName ?? "null"}");
+                
+                // If value is null, try to create ElementDataModel (it should load existing data automatically)
+                if (value == null)
+                {
+                    diagnostics.Add($"  ⚠️ Value is null - attempting to create ElementDataModel which should load existing exchange data...");
+                    
+                    // Try to get the generic type argument from Response<T> to know what type to create
+                    Type elementDataModelTypeFromGeneric = null;
+                    if (responseType.IsGenericType)
                     {
-                        elementDataModel = taskResult;
+                        var genericArgs = responseType.GetGenericArguments();
+                        if (genericArgs.Length > 0)
+                        {
+                            elementDataModelTypeFromGeneric = genericArgs[0];
+                            diagnostics.Add($"  Found generic type argument: {elementDataModelTypeFromGeneric.FullName}");
+                        }
+                    }
+                    
+                    // Try to find ElementDataModel type (try the generic type first, then fallback to known types)
+                    Type elementDataModelType = elementDataModelTypeFromGeneric;
+                    if (elementDataModelType == null)
+                    {
+                        var possibleTypeNames = new[]
+                        {
+                            "Autodesk.DataExchange.DataModels.ElementDataModel, Autodesk.DataExchange",
+                            "Autodesk.DataExchange.Core.Models.ElementDataModel, Autodesk.DataExchange.Core"
+                        };
+                        
+                        foreach (var typeName in possibleTypeNames)
+                        {
+                            elementDataModelType = Type.GetType(typeName);
+                            if (elementDataModelType != null) break;
+                        }
+                    }
+                    
+                    if (elementDataModelType == null)
+                    {
+                        // Try to find it in loaded assemblies
+                        foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+                        {
+                            try
+                            {
+                                elementDataModelType = assembly.GetType("Autodesk.DataExchange.DataModels.ElementDataModel") 
+                                    ?? assembly.GetType("Autodesk.DataExchange.Core.Models.ElementDataModel");
+                                if (elementDataModelType != null) break;
+                            }
+                            catch { }
+                        }
+                    }
+                    
+                    if (elementDataModelType != null)
+                    {
+                        // Try ElementDataModel.Create static method (same as ExportGeometryToSMB.cs)
+                        var createMethod = elementDataModelType.GetMethod("Create", BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy);
+                        if (createMethod != null)
+                        {
+                            var parameters = createMethod.GetParameters();
+                            diagnostics.Add($"  Found Create method with {parameters.Length} parameter(s)");
+                            
+                            // Try Create(IClient) - most common case
+                            if (parameters.Length == 1)
+                            {
+                                var paramType = parameters[0].ParameterType;
+                                if (paramType.IsAssignableFrom(client.GetType()))
+                                {
+                                    try
+                                    {
+                                        elementDataModel = createMethod.Invoke(null, new object[] { client });
+                                        diagnostics.Add($"  ✓ Created ElementDataModel using Create(IClient)");
+                                    }
+                                    catch (Exception ex)
+                                    {
+                                        diagnostics.Add($"  ⚠️ Create(IClient) failed: {ex.Message}");
+                                    }
+                                }
+                                else if (paramType.Name == "DataExchangeIdentifier" || paramType.FullName?.Contains("DataExchangeIdentifier") == true)
+                                {
+                                    try
+                                    {
+                                        elementDataModel = createMethod.Invoke(null, new object[] { identifier });
+                                        diagnostics.Add($"  ✓ Created ElementDataModel using Create(DataExchangeIdentifier)");
+                                    }
+                                    catch (Exception ex)
+                                    {
+                                        diagnostics.Add($"  ⚠️ Create(DataExchangeIdentifier) failed: {ex.Message}");
+                                    }
+                                }
+                            }
+                            // Try Create(IClient, DataExchangeIdentifier)
+                            else if (parameters.Length == 2)
+                            {
+                                try
+                                {
+                                    elementDataModel = createMethod.Invoke(null, new object[] { client, identifier });
+                                    diagnostics.Add($"  ✓ Created ElementDataModel using Create(IClient, DataExchangeIdentifier)");
+                                }
+                                catch (Exception ex)
+                                {
+                                    diagnostics.Add($"  ⚠️ Create(IClient, DataExchangeIdentifier) failed: {ex.Message}");
+                                }
+                            }
+                            // Try parameterless Create()
+                            else if (parameters.Length == 0)
+                            {
+                                try
+                                {
+                                    elementDataModel = createMethod.Invoke(null, null);
+                                    diagnostics.Add($"  ✓ Created ElementDataModel using Create()");
+                                }
+                                catch (Exception ex)
+                                {
+                                    diagnostics.Add($"  ⚠️ Create() failed: {ex.Message}");
+                                }
+                            }
+                        }
+                        
+                        // If Create didn't work, try constructor
+                        if (elementDataModel == null)
+                        {
+                            var constructor = elementDataModelType.GetConstructor(new[] { identifier.GetType() });
+                            if (constructor != null)
+                            {
+                                try
+                                {
+                                    elementDataModel = constructor.Invoke(new object[] { identifier });
+                                    diagnostics.Add($"  ✓ Created ElementDataModel using constructor(DataExchangeIdentifier)");
+                                }
+                                catch (Exception ex)
+                                {
+                                    diagnostics.Add($"  ⚠️ Constructor failed: {ex.Message}");
+                                }
+                            }
+                        }
+                    }
+                    else
+                    {
+                        diagnostics.Add($"  ⚠️ Could not find ElementDataModel type to create");
+                    }
+                    
+                    // If we created an ElementDataModel, try to load existing data using RetrieveLatestExchangeDataAsync
+                    if (elementDataModel != null)
+                    {
+                        diagnostics.Add($"  Attempting to load existing exchange data into newly created ElementDataModel...");
+                        try
+                        {
+                            var retrieveLatestMethod = allMethods.FirstOrDefault(m => 
+                                m.Name == "RetrieveLatestExchangeDataAsync" && 
+                                m.IsPublic &&
+                                m.GetParameters().Length >= 1 &&
+                                m.GetParameters()[0].ParameterType.Name.Contains("ElementDataModel"));
+                            
+                            if (retrieveLatestMethod != null)
+                            {
+                                diagnostics.Add($"  Found RetrieveLatestExchangeDataAsync method");
+                                var retrieveParams = retrieveLatestMethod.GetParameters();
+                                object[] invokeParams;
+                                
+                                if (retrieveParams.Length == 1)
+                                {
+                                    invokeParams = new object[] { elementDataModel };
+                                }
+                                else if (retrieveParams.Length == 2)
+                                {
+                                    invokeParams = new object[] { elementDataModel, CancellationToken.None };
+                                }
+                                else if (retrieveParams.Length == 4)
+                                {
+                                    invokeParams = new object[] { elementDataModel, null, null, CancellationToken.None };
+                                }
+                                else
+                                {
+                                    invokeParams = new object[] { elementDataModel };
+                                }
+                                
+                                var retrieveResult = retrieveLatestMethod.Invoke(client, invokeParams);
+                                if (retrieveResult != null)
+                                {
+                                    var retrieveTaskResult = ((dynamic)retrieveResult).GetAwaiter().GetResult();
+                                    diagnostics.Add($"  ✓ RetrieveLatestExchangeDataAsync completed");
+                                    
+                                    // Check if it was successful
+                                    var retrieveResponseType = retrieveTaskResult?.GetType();
+                                    if (retrieveResponseType != null)
+                                    {
+                                        var retrieveIsSuccessProp = retrieveResponseType.GetProperty("IsSuccess") ?? retrieveResponseType.GetProperty("Success");
+                                        if (retrieveIsSuccessProp != null)
+                                        {
+                                            var isSuccess = (bool?)retrieveIsSuccessProp.GetValue(retrieveTaskResult);
+                                            diagnostics.Add($"  Response IsSuccess: {isSuccess}");
+                                        }
+                                    }
+                                }
+                            }
+                            else
+                            {
+                                diagnostics.Add($"  ⚠️ RetrieveLatestExchangeDataAsync method not found");
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            diagnostics.Add($"  ⚠️ Error calling RetrieveLatestExchangeDataAsync: {ex.Message}");
+                        }
                     }
                 }
                 else
                 {
+                    // Value is not null - try to use it directly (same pattern as ExportGeometryToSMB.cs)
+                    // First try to get the type from the Response generic type argument
+                    Type elementDataModelType = null;
+                    if (responseType.IsGenericType)
+                    {
+                        var genericArgs = responseType.GetGenericArguments();
+                        if (genericArgs.Length > 0)
+                        {
+                            elementDataModelType = genericArgs[0];
+                            diagnostics.Add($"  Using ElementDataModel type from Response generic: {elementDataModelType.FullName}");
+                        }
+                    }
+                    
+                    // If we have the type and value is assignable, use it directly
+                    if (elementDataModelType != null && elementDataModelType.IsAssignableFrom(value.GetType()))
+                    {
+                        elementDataModel = value;
+                        diagnostics.Add($"  ✓ Successfully extracted ElementDataModel from Value");
+                    }
+                    else
+                    {
+                        // Try using value directly (it should be the right type already)
+                        elementDataModel = value;
+                        diagnostics.Add($"  ✓ Using Value directly (type: {value.GetType().FullName})");
+                    }
+                }
+            }
+            else
+            {
+                // No Value property - try direct use
+                diagnostics.Add($"  No Value property found - trying to use response directly...");
+                
+                Type elementDataModelType = null;
+                var possibleTypeNames = new[]
+                {
+                    "Autodesk.DataExchange.DataModels.ElementDataModel, Autodesk.DataExchange",
+                    "Autodesk.DataExchange.Core.Models.ElementDataModel, Autodesk.DataExchange.Core",
+                    "Autodesk.DataExchange.Core.Models.ElementDataModel"
+                };
+                
+                foreach (var typeName in possibleTypeNames)
+                {
+                    elementDataModelType = Type.GetType(typeName);
+                    if (elementDataModelType != null) break;
+                }
+                
+                if (elementDataModelType == null)
+                {
+                    foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+                    {
+                        try
+                        {
+                            elementDataModelType = assembly.GetType("Autodesk.DataExchange.DataModels.ElementDataModel") 
+                                ?? assembly.GetType("Autodesk.DataExchange.Core.Models.ElementDataModel");
+                            if (elementDataModelType != null) break;
+                        }
+                        catch { }
+                    }
+                }
+                
+                if (elementDataModelType != null && elementDataModelType.IsAssignableFrom(taskResult.GetType()))
+                {
                     elementDataModel = taskResult;
+                    diagnostics.Add($"  ✓ Response is directly ElementDataModel");
+                }
+                else
+                {
+                    elementDataModel = taskResult;
+                    diagnostics.Add($"  ⚠️ No Value property, using taskResult directly");
                 }
             }
             
             if (elementDataModel == null)
             {
                 diagnostics.Add($"  ⚠️ ElementDataModel is null");
+                diagnostics.Add($"  This exchange may be empty or the Value property returned null.");
+                diagnostics.Add($"  If this exchange should have GeometryAssets, check:");
+                diagnostics.Add($"    1. That the exchange ID is correct");
+                diagnostics.Add($"    2. That the exchange has been populated with geometry data");
+                diagnostics.Add($"    3. That you have proper permissions to access this exchange");
                 return results;
             }
+            
+            diagnostics.Add($"  ✓ Got ElementDataModel: {elementDataModel.GetType().FullName}");
 
-            var elementDataModelType = elementDataModel.GetType();
-            var exchangeDataProp = elementDataModelType.GetProperty("ExchangeData", 
+            var elementDataModelRuntimeType = elementDataModel.GetType();
+            var exchangeDataProp = elementDataModelRuntimeType.GetProperty("ExchangeData", 
                 BindingFlags.NonPublic | BindingFlags.Instance);
             if (exchangeDataProp == null)
             {

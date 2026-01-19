@@ -7,6 +7,7 @@ using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using Autodesk.DesignScript.Runtime;
+using Autodesk.DataExchange;
 using Autodesk.DataExchange.DataModels;
 using Autodesk.DataExchange.Core.Models;
 using Autodesk.DataExchange.Interface;
@@ -71,11 +72,11 @@ namespace DataExchangeNodes.DataExchange
                     diagnostics.Add($"✓ File extension validated: {extension} (STEP format)");
                 }
 
-                // Get Client instance (using same method as ExportGeometryToSMB)
-                var client = TryGetClientInstance(diagnostics);
+                // Get Client instance using centralized DataExchangeClient
+                var client = DataExchangeClient.GetClient();
                 if (client == null)
                 {
-                    diagnostics.Add("✗ ERROR: Could not get Client instance");
+                    diagnostics.Add("✗ ERROR: Could not get Client instance. Make sure you have selected an Exchange first using the SelectExchangeElements node.");
                     return CreateErrorResult(diagnostics, geometryCount, uploadInfo);
                 }
 
@@ -737,91 +738,6 @@ namespace DataExchangeNodes.DataExchange
             };
         }
 
-        /// <summary>
-        /// Gets the Client instance using the same method as ExportGeometryToSMB
-        /// </summary>
-        private static object TryGetClientInstance(List<string> diagnostics)
-        {
-            object client = null;
-            
-            // Method 1: Try to get from SelectExchangeElementsViewCustomization
-            try
-            {
-                var viewCustomizationType = Type.GetType("DataExchangeNodes.NodeViews.DataExchange.SelectExchangeElementsViewCustomization, ExchangeNodes.NodeViews");
-                if (viewCustomizationType != null)
-                {
-                    var clientProperty = viewCustomizationType.GetProperty("ClientInstance", BindingFlags.Public | BindingFlags.Static);
-                    if (clientProperty != null)
-                    {
-                        client = clientProperty.GetValue(null);
-                        if (client != null)
-                        {
-                            diagnostics?.Add($"✓ Found Client instance via SelectExchangeElementsViewCustomization");
-                        }
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                diagnostics?.Add($"  ⚠️ Could not access ClientInstance property: {ex.Message}");
-            }
-
-            // Method 2: Try to find Client type directly
-            if (client == null)
-            {
-                try
-                {
-                    foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
-                    {
-                        try
-                        {
-                            var foundClientType = assembly.GetTypes().FirstOrDefault(t => 
-                                t.Name == "Client" && 
-                                t.Namespace == "Autodesk.DataExchange" && // More specific - must be exact namespace
-                                typeof(IClient).IsAssignableFrom(t)); // Must implement IClient
-                            
-                            if (foundClientType != null)
-                            {
-                                diagnostics?.Add($"  Found Client type: {foundClientType.FullName}");
-                                var staticFields = foundClientType.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
-                                var instanceField = staticFields.FirstOrDefault(f => 
-                                    f.FieldType == foundClientType || 
-                                    f.FieldType.IsAssignableFrom(foundClientType));
-                                
-                                if (instanceField != null)
-                                {
-                                    client = instanceField.GetValue(null);
-                                    if (client != null)
-                                    {
-                                        diagnostics?.Add($"✓ Found Client instance via static field");
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                        catch
-                        {
-                            // Continue searching
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    diagnostics?.Add($"  ⚠️ Could not search for Client type: {ex.Message}");
-                }
-            }
-
-            if (client != null)
-            {
-                diagnostics?.Add($"✓ Found Client instance: {client.GetType().FullName}");
-            }
-            else
-            {
-                diagnostics?.Add($"✗ Could not find Client instance");
-            }
-
-            return client;
-        }
 
         /// <summary>
         /// Creates an error result dictionary

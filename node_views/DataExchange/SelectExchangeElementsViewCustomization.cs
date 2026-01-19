@@ -43,9 +43,11 @@ namespace DataExchangeNodes.NodeViews.DataExchange
         private bool autoTriggerEnabled = true; // Flag to control auto-trigger
 
         /// <summary>
-        /// Exposes the DataExchange Client instance for reflection-based inspection
+        /// Exposes the DataExchange Client instance for backward compatibility.
+        /// New code should use DataExchangeClient.GetClient() instead.
         /// </summary>
-        public static Client ClientInstance => _client;
+        [Obsolete("Use DataExchangeNodes.DataExchange.DataExchangeClient.GetClient() instead")]
+        public static Client ClientInstance => DataExchangeNodes.DataExchange.DataExchangeClient.GetClient() ?? _client;
 
         public DelegateCommand OpenDataExchangeCommand { get; set; }
 
@@ -126,11 +128,12 @@ namespace DataExchangeNodes.NodeViews.DataExchange
                     ConnectorVersion = "0.1.0"
                 };
 
-                // Create or reuse DataExchange client
-                if (_client == null)
+                // Initialize or reuse centralized DataExchange client
+                if (!DataExchangeNodes.DataExchange.DataExchangeClient.IsInitialized())
                 {
-                    dynamoViewModel?.Model?.Logger?.Log("SelectExchangeElements: Creating NEW DataExchange client...");
-                    _client = new Client(sdkOptions);
+                    dynamoViewModel?.Model?.Logger?.Log("SelectExchangeElements: Initializing centralized DataExchange client...");
+                    DataExchangeNodes.DataExchange.DataExchangeClient.InitializeClient(sdkOptions);
+                    _client = DataExchangeNodes.DataExchange.DataExchangeClient.GetClient();
                     _readModel = ReadExchangeModel.GetInstance(_client);
                     
                     // Subscribe to exchange loaded event for auto-triggering selection
@@ -140,7 +143,13 @@ namespace DataExchangeNodes.NodeViews.DataExchange
                 }
                 else
                 {
-                    dynamoViewModel?.Model?.Logger?.Log("SelectExchangeElements: Reusing existing client and ReadModel");
+                    dynamoViewModel?.Model?.Logger?.Log("SelectExchangeElements: Reusing existing centralized client and ReadModel");
+                    _client = DataExchangeNodes.DataExchange.DataExchangeClient.GetClient();
+                    if (_readModel == null)
+                    {
+                        _readModel = ReadExchangeModel.GetInstance(_client);
+                        _readModel.AfterGetLatestExchangeDetails += OnExchangeLoadedAutoTrigger;
+                    }
                 }
                 
                 // Register auth provider and client for LoadGeometryFromExchange node

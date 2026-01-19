@@ -350,12 +350,14 @@ DataExchangeNodes/
 ├── nodes/                             # Zero-touch nodes
 │   ├── ExchangeNodes.csproj
 │   └── DataExchange/
+│       ├── DataExchangeClient.cs      # Centralized Client management (NEW!)
 │       ├── Exchange.cs                # Exchange data model
 │       ├── DataExchangeUtils.cs       # AST helper functions
+│       ├── InspectExchange.cs         # Exchange inspection node
 │       ├── LoadGeometryFromExchange.cs # Geometry loader
 │       ├── ExportGeometryToSMB.cs     # SMB export (uses reflection)
-│       ├── ConvertSmbToStep.cs        # SMB→STEP conversion (planned)
-│       └── UploadStepToExchange.cs    # STEP upload (planned)
+│       ├── UploadSTPToExchange.cs     # STEP upload
+│       └── DownloadSTPFromExchange.cs # STEP download
 ├── node_models/                       # NodeModel definitions
 │   ├── ExchangeNodes.NodeModels.csproj
 │   └── DataExchange/
@@ -406,6 +408,186 @@ The following DLLs are referenced from `native/FDXToCollab/` (already deployed):
 | `Autodesk.GeometryPrimitives.Data.dll` | Geometry data structures |
 
 > **Note:** All native DLLs are in `native/FDXToCollab/` and are automatically copied to output during build.
+
+---
+
+## 🔧 DataExchangeClient - Centralized Client Management
+
+The `DataExchangeClient` class provides a **consistent, type-safe way** to access the DataExchange `Client` instance across all nodes in the project. This eliminates the need for reflection and follows the same pattern used in the grasshopper-connector.
+
+### Overview
+
+**Location:** `DataExchangeNodes.DataExchange.DataExchangeClient`
+
+**Pattern:** Matches `ReadExchangesData.InitializeClient()` from grasshopper-connector (lines 137-150)
+
+### How It Works
+
+1. **Initialization:** The `SelectExchangeElementsViewCustomization` automatically initializes the Client when the Select Exchange node is first used
+2. **Access:** All nodes call `DataExchangeClient.GetClient()` to get the Client instance
+3. **Type Safety:** Returns `Client` type directly (not `object` or `IClient`), enabling direct method calls without reflection
+
+### API Reference
+
+```csharp
+namespace DataExchangeNodes.DataExchange
+{
+    public static class DataExchangeClient
+    {
+        /// <summary>
+        /// Initializes the Autodesk.DataExchange client with the specified SDK options.
+        /// Pattern matches: ReadExchangesData.InitializeClient (grasshopper-connector)
+        /// </summary>
+        /// <param name="sdkOptions">The SDK options for configuring the DataExchange client</param>
+        public static void InitializeClient(SDKOptions sdkOptions)
+        
+        /// <summary>
+        /// Gets the DataExchange Client instance.
+        /// Returns null if InitializeClient has not been called yet.
+        /// </summary>
+        /// <returns>The Client instance, or null if not initialized</returns>
+        public static Client GetClient()
+        
+        /// <summary>
+        /// Checks if the Client has been initialized.
+        /// </summary>
+        /// <returns>True if the Client has been initialized, false otherwise</returns>
+        public static bool IsInitialized()
+        
+        /// <summary>
+        /// Gets the SDK options that were used to initialize the client.
+        /// </summary>
+        /// <returns>The SDKOptions instance, or null if not initialized</returns>
+        public static SDKOptions GetSDKOptions()
+        
+        /// <summary>
+        /// Resets the client instance. Useful for testing or when re-initialization is needed.
+        /// </summary>
+        public static void Reset()
+    }
+}
+```
+
+### Usage Examples
+
+#### Basic Usage (All Nodes)
+
+All nodes in the project use this pattern:
+
+```csharp
+// Get Client instance using centralized DataExchangeClient
+var client = DataExchangeClient.GetClient();
+if (client == null)
+{
+    // Handle error - client not initialized
+    return CreateErrorResult("Could not get Client instance. Make sure you have selected an Exchange first.");
+}
+
+// Use client directly - no reflection needed!
+var identifier = new DataExchangeIdentifier
+{
+    ExchangeId = exchange.ExchangeId,
+    CollectionId = exchange.CollectionId
+};
+
+var response = await client.GetElementDataModelAsync(identifier, CancellationToken.None);
+var model = response.Value;
+```
+
+#### Initialization (SelectExchangeElementsViewCustomization)
+
+The Client is automatically initialized when the Select Exchange node is used:
+
+```csharp
+// Configure SDK options
+var sdkOptions = new SDKOptions
+{
+    AuthProvider = authProvider,
+    Storage = storage,
+    HostingProvider = hostingProvider,
+    Logger = logger,
+    HostApplicationName = "Dynamo",
+    HostApplicationVersion = "4.1",
+    ConnectorName = "DataExchange Nodes",
+    ConnectorVersion = "0.1.0"
+};
+
+// Initialize centralized DataExchange client
+if (!DataExchangeClient.IsInitialized())
+{
+    DataExchangeClient.InitializeClient(sdkOptions);
+}
+
+// Get the Client instance
+var client = DataExchangeClient.GetClient();
+```
+
+#### Pattern Comparison
+
+**Before (Reflection-based - ❌ Don't use):**
+```csharp
+// Old approach - using reflection
+var viewCustomizationType = Type.GetType("...SelectExchangeElementsViewCustomization...");
+var clientInstanceProp = viewCustomizationType.GetProperty("ClientInstance", ...);
+var client = clientInstanceProp.GetValue(null) as Client;
+
+// Then using reflection to call methods
+var method = clientType.GetMethod("GetElementDataModelAsync", ...);
+var result = method.Invoke(client, ...);
+```
+
+**After (Direct access - ✅ Use this):**
+```csharp
+// New approach - direct access
+var client = DataExchangeClient.GetClient();
+
+// Direct method calls - type-safe!
+var response = await client.GetElementDataModelAsync(identifier, CancellationToken.None);
+var model = response.Value;
+```
+
+### Benefits
+
+1. **No Reflection:** Direct type-safe access to `Client` methods
+2. **Consistency:** Same pattern used across all nodes
+3. **Maintainability:** Easy to understand and debug
+4. **Performance:** No reflection overhead
+5. **Type Safety:** Compile-time checking instead of runtime errors
+
+### Files Using DataExchangeClient
+
+All nodes in the project use `DataExchangeClient.GetClient()`:
+
+- ✅ `InspectExchange.cs` - Exchange inspection
+- ✅ `LoadGeometryFromExchange.cs` - Geometry loading
+- ✅ `ExportGeometryToSMB.cs` - SMB export
+- ✅ `UploadSTPToExchange.cs` - STEP upload
+- ✅ `DownloadSTPFromExchange.cs` - STEP download
+
+### Implementation Details
+
+The `InitializeClient` method matches the exact pattern from grasshopper-connector:
+
+```csharp
+public static void InitializeClient(SDKOptions sdkOptions)
+{
+    if (sdkOptions == null)
+    {
+        throw new ArgumentNullException(nameof(sdkOptions), "SDKOptions cannot be null");
+    }
+
+    Client client = null;
+    Task.Run(() =>
+    {
+        client = new Client(sdkOptions);
+    }).GetAwaiter().GetResult();
+
+    _client = client;
+    _sdkOptions = sdkOptions;
+}
+```
+
+This ensures thread-safe initialization and matches the proven pattern from the grasshopper-connector project.
 
 ---
 
@@ -495,6 +677,13 @@ MIT License - See [LICENSE](LICENSE) for details.
   - Well-encapsulated methods for maintainability
 
 ### Architecture Decisions
+
+- **Centralized Client Management:**
+  - **Pattern:** `DataExchangeClient` class (matches grasshopper-connector's `ReadExchangesData.InitializeClient`)
+  - **Location:** `DataExchangeNodes.DataExchange.DataExchangeClient`
+  - **Usage:** All nodes use `DataExchangeClient.GetClient()` instead of reflection-based access
+  - **Initialization:** Called automatically by `SelectExchangeElementsViewCustomization` when the Select Exchange node is used
+  - **Benefits:** No reflection needed, type-safe, consistent access pattern across all nodes
 
 - **Reflection vs Public API:** 
   - SMB export/upload uses reflection for internal SDK methods (working successfully)

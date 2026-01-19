@@ -4,7 +4,9 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Threading;
+using System.Threading.Tasks;
 using Autodesk.DesignScript.Runtime;
+using Autodesk.DataExchange;
 using Autodesk.DataExchange.Core;
 using Autodesk.DataExchange.Core.Models;
 using Autodesk.DataExchange.DataModels;
@@ -83,7 +85,7 @@ namespace DataExchangeNodes.DataExchange
         /// <summary>
         /// Inspects an Exchange and returns detailed information about its contents
         /// </summary>
-        [MultiReturn(new[] { "report", "elementCount", "geometryAssetCount", "designAssetCount", "customParameters", "success" })]
+        [MultiReturn(new[] { "report", "elementCount", "geometryAssetCount", "designAssetCount", "customParameters", "elementDataModel", "success" })]
         public static Dictionary<string, object> Inspect(
             Exchange exchange,
             bool includeDetails = true)
@@ -93,6 +95,7 @@ namespace DataExchangeNodes.DataExchange
             var geometryAssetCount = 0;
             var designAssetCount = 0;
             var customParameters = new Dictionary<string, object>();
+            ElementDataModel elementDataModel = null;
             var success = false;
 
             try
@@ -104,27 +107,49 @@ namespace DataExchangeNodes.DataExchange
 
                 if (exchange == null)
                 {
-                    return CreateErrorResult(report, "Exchange is null", customParameters);
+                    return CreateErrorResult(report, "Exchange is null", customParameters, null);
                 }
 
-                // Get Client instance
-                var client = TryGetClientInstance(report);
+                // Get Client instance using centralized DataExchangeClient
+                var client = DataExchangeClient.GetClient();
                 if (client == null)
                 {
-                    return CreateErrorResult(report, "Could not get Client instance. Make sure you have selected an Exchange first.", customParameters);
+                    return CreateErrorResult(report, "Could not get Client instance. Make sure you have selected an Exchange first using the SelectExchangeElements node.", customParameters, null);
                 }
-
-                var clientType = client.GetType();
 
                 // Create DataExchangeIdentifier
                 var identifier = CreateDataExchangeIdentifier(exchange);
 
-                // Get ElementDataModel and ExchangeData
-                var (model, exchangeData, exchangeDataType) = GetElementDataModelAndExchangeData(client, clientType, identifier, report);
+                // Get ElementDataModel using the direct Client method (same pattern as grasshopper-connector)
+                ElementDataModel model = null;
+                try
+                {
+                    var elementDataModelResponse = Task.Run(async () => await client.GetElementDataModelAsync(identifier, CancellationToken.None)).Result;
+                    model = elementDataModelResponse?.Value;
+                }
+                catch (Exception ex)
+                {
+                    report.Add($"✗ ERROR: Could not load ElementDataModel: {ex.Message}");
+                    return CreateErrorResult(report, $"Failed to get ElementDataModel: {ex.Message}", customParameters, null);
+                }
+
                 if (model == null)
                 {
-                    return CreateErrorResult(report, "Could not load ElementDataModel", customParameters);
+                    return CreateErrorResult(report, "Could not load ElementDataModel - response was null", customParameters, null);
                 }
+
+                // Get ExchangeData
+                var exchangeDataField = typeof(ElementDataModel).GetField("exchangeData", BindingFlags.NonPublic | BindingFlags.Instance);
+                if (exchangeDataField == null)
+                {
+                    report.Add("✗ ERROR: Could not find exchangeData field");
+                    return CreateErrorResult(report, "Could not access ExchangeData from ElementDataModel", customParameters, null);
+                }
+
+                var exchangeData = exchangeDataField.GetValue(model);
+                var exchangeDataType = exchangeData.GetType();
+                
+                elementDataModel = model;
 
                 report.Add("✓ Successfully loaded ElementDataModel");
                 report.Add("");
@@ -159,11 +184,12 @@ namespace DataExchangeNodes.DataExchange
                 { "geometryAssetCount", geometryAssetCount },
                 { "designAssetCount", designAssetCount },
                 { "customParameters", customParameters },
+                { "elementDataModel", elementDataModel },
                 { "success", success }
             };
         }
 
-        private static Dictionary<string, object> CreateErrorResult(List<string> report, string errorMessage, Dictionary<string, object> customParameters = null)
+        private static Dictionary<string, object> CreateErrorResult(List<string> report, string errorMessage, Dictionary<string, object> customParameters = null, ElementDataModel elementDataModel = null)
         {
             report.Add($"✗ ERROR: {errorMessage}");
             return new Dictionary<string, object>
@@ -173,6 +199,7 @@ namespace DataExchangeNodes.DataExchange
                 { "geometryAssetCount", 0 },
                 { "designAssetCount", 0 },
                 { "customParameters", customParameters ?? new Dictionary<string, object>() },
+                { "elementDataModel", elementDataModel },
                 { "success", false }
             };
         }
@@ -203,17 +230,45 @@ namespace DataExchangeNodes.DataExchange
             report.Add($"Hub ID: {exchange?.HubId ?? "N/A"}");
             report.Add("");
 
-            // Get Client instance
-            var client = TryGetClientInstance(report);
+            // Get Client instance using centralized DataExchangeClient
+            var client = DataExchangeClient.GetClient();
             if (client == null)
             {
-                report.Add("✗ ERROR: Could not get Client instance");
+                report.Add("✗ ERROR: Could not get Client instance. Make sure you have selected an Exchange first using the SelectExchangeElements node.");
                 return;
             }
 
-            var clientType = client.GetType();
             var identifier = CreateDataExchangeIdentifier(exchange);
-            var (model, exchangeData, exchangeDataType) = GetElementDataModelAndExchangeData(client, clientType, identifier, report);
+            
+            // Get ElementDataModel using the direct Client method
+            ElementDataModel model = null;
+            try
+            {
+                var elementDataModelResponse = Task.Run(async () => await client.GetElementDataModelAsync(identifier, CancellationToken.None)).Result;
+                model = elementDataModelResponse?.Value;
+            }
+            catch (Exception ex)
+            {
+                report.Add($"✗ ERROR: Could not load ElementDataModel: {ex.Message}");
+                return;
+            }
+
+            if (model == null)
+            {
+                report.Add("✗ ERROR: Could not load ElementDataModel - response was null");
+                return;
+            }
+
+            // Get ExchangeData
+            var exchangeDataField = typeof(ElementDataModel).GetField("exchangeData", BindingFlags.NonPublic | BindingFlags.Instance);
+            if (exchangeDataField == null)
+            {
+                report.Add("✗ ERROR: Could not find exchangeData field");
+                return;
+            }
+
+            var exchangeData = exchangeDataField.GetValue(model);
+            var exchangeDataType = exchangeData.GetType();
             
             if (model == null || exchangeData == null)
             {
@@ -251,30 +306,6 @@ namespace DataExchangeNodes.DataExchange
             report.Add("=".PadRight(80, '='));
         }
 
-        private static object TryGetClientInstance(List<string> report)
-        {
-            try
-            {
-                var viewCustomizationType = Type.GetType("DataExchangeNodes.NodeViews.DataExchange.SelectExchangeElementsViewCustomization, ExchangeNodes.NodeViews");
-                if (viewCustomizationType != null)
-                {
-                    var clientInstanceProp = viewCustomizationType.GetProperty("ClientInstance", BindingFlags.Public | BindingFlags.Static);
-                    if (clientInstanceProp != null)
-                    {
-                        var client = clientInstanceProp.GetValue(null);
-                        if (client != null)
-                        {
-                            return client;
-                        }
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                report?.Add($"⚠️ Could not get Client via SelectExchangeElementsViewCustomization: {ex.Message}");
-            }
-            return null;
-        }
 
         private static DataExchangeIdentifier CreateDataExchangeIdentifier(Exchange exchange)
         {
@@ -290,60 +321,115 @@ namespace DataExchangeNodes.DataExchange
             return identifier;
         }
 
-        private static (ElementDataModel model, object exchangeData, Type exchangeDataType) GetElementDataModelAndExchangeData(
-            object client, Type clientType, DataExchangeIdentifier identifier, List<string> report)
+
+        /// <summary>
+        /// Diagnostic method: Lists all public methods on the Client that might help access exchange data
+        /// (Note: This method is kept for diagnostics but may not be needed now that we use Client directly)
+        /// </summary>
+        private static void ListAllPublicClientMethods(Client client, Type clientType, DataExchangeIdentifier identifier, List<string> report)
         {
-            var getElementDataModelMethod = clientType.GetMethod("GetElementDataModelAsync",
-                BindingFlags.Public | BindingFlags.Instance,
-                null,
-                new[] { typeof(DataExchangeIdentifier), typeof(CancellationToken) },
-                null);
-
-            if (getElementDataModelMethod == null)
+            report.Add("=== DIAGNOSTIC: All Public Methods on Client ===");
+            
+            var allMethods = clientType.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static);
+            var relevantMethods = allMethods
+                .Where(m => 
+                    m.Name.Contains("Get", StringComparison.OrdinalIgnoreCase) ||
+                    m.Name.Contains("Element", StringComparison.OrdinalIgnoreCase) ||
+                    m.Name.Contains("Asset", StringComparison.OrdinalIgnoreCase) ||
+                    m.Name.Contains("Geometry", StringComparison.OrdinalIgnoreCase) ||
+                    m.Name.Contains("Data", StringComparison.OrdinalIgnoreCase) ||
+                    m.Name.Contains("Exchange", StringComparison.OrdinalIgnoreCase))
+                .OrderBy(m => m.Name)
+                .ToList();
+            
+            report.Add($"Found {relevantMethods.Count} potentially relevant public methods:");
+            foreach (var method in relevantMethods)
             {
-                report.Add("✗ ERROR: Could not find GetElementDataModelAsync method");
-                return (null, null, null);
+                var parameters = method.GetParameters();
+                var paramList = string.Join(", ", parameters.Select(p => $"{p.ParameterType.Name} {p.Name}"));
+                report.Add($"  - {method.Name}({paramList})");
             }
-
-            var elementDataModelTask = getElementDataModelMethod.Invoke(client, new object[] { identifier, CancellationToken.None });
-            var elementDataModel = ((dynamic)elementDataModelTask).GetAwaiter().GetResult();
-
-            if (elementDataModel == null)
+            report.Add("");
+            
+            // Try to find methods that take DataExchangeIdentifier
+            report.Add("=== Methods that take DataExchangeIdentifier ===");
+            var methodsWithIdentifier = allMethods
+                .Where(m => m.GetParameters().Any(p => 
+                    p.ParameterType.Name.Contains("DataExchangeIdentifier") || 
+                    p.ParameterType.Name.Contains("Identifier")))
+                .ToList();
+            
+            foreach (var method in methodsWithIdentifier)
             {
-                report.Add("✗ ERROR: GetElementDataModelAsync returned null");
-                return (null, null, null);
+                var parameters = method.GetParameters();
+                var paramList = string.Join(", ", parameters.Select(p => $"{p.ParameterType.Name} {p.Name}"));
+                report.Add($"  - {method.Name}({paramList})");
+                
+                // Try to invoke if it looks safe (no parameters or just identifier + cancellation token)
+                if (parameters.Length <= 2 && 
+                    parameters.Any(p => p.ParameterType.Name.Contains("DataExchangeIdentifier") || p.ParameterType.Name.Contains("Identifier")))
+                {
+                    try
+                    {
+                        report.Add($"    Attempting to invoke {method.Name}...");
+                        object[] invokeParams = new object[parameters.Length];
+                        for (int i = 0; i < parameters.Length; i++)
+                        {
+                            if (parameters[i].ParameterType.Name.Contains("DataExchangeIdentifier") || 
+                                parameters[i].ParameterType.Name.Contains("Identifier"))
+                            {
+                                invokeParams[i] = identifier;
+                            }
+                            else if (parameters[i].ParameterType == typeof(CancellationToken))
+                            {
+                                invokeParams[i] = CancellationToken.None;
+                            }
+                            else
+                            {
+                                invokeParams[i] = null;
+                            }
+                        }
+                        
+                        var result = method.Invoke(client, invokeParams);
+                        if (result != null)
+                        {
+                            var resultType = result.GetType();
+                            report.Add($"    ✓ Method returned: {resultType.Name}");
+                            
+                            // If it's a Task, try to get the result
+                            if (resultType.IsGenericType && resultType.GetGenericTypeDefinition().Name.Contains("Task"))
+                            {
+                                try
+                                {
+                                    var taskResult = ((dynamic)result).GetAwaiter().GetResult();
+                                    report.Add($"    ✓ Task result type: {taskResult?.GetType().Name ?? "null"}");
+                                    
+                                    // Check if result has Value property
+                                    var valueProp = taskResult?.GetType().GetProperty("Value");
+                                    if (valueProp != null)
+                                    {
+                                        var value = valueProp.GetValue(taskResult);
+                                        report.Add($"    ✓ Value property found: {value?.GetType().Name ?? "null"}");
+                                    }
+                                }
+                                catch (Exception ex)
+                                {
+                                    report.Add($"    ⚠️ Could not await task: {ex.Message}");
+                                }
+                            }
+                        }
+                        else
+                        {
+                            report.Add($"    ⚠️ Method returned null");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        report.Add($"    ⚠️ Error invoking method: {ex.Message}");
+                    }
+                }
             }
-
-            // Check if result is IResponse<ElementDataModel>
-            ElementDataModel model = null;
-            var responseType = elementDataModel.GetType();
-            var valueProp = responseType.GetProperty("Value");
-            if (valueProp != null)
-            {
-                model = valueProp.GetValue(elementDataModel) as ElementDataModel;
-            }
-            else
-            {
-                model = elementDataModel as ElementDataModel;
-            }
-
-            if (model == null)
-            {
-                report.Add("✗ ERROR: Could not extract ElementDataModel from response");
-                return (null, null, null);
-            }
-
-            // Get ExchangeData
-            var exchangeDataField = typeof(ElementDataModel).GetField("exchangeData", BindingFlags.NonPublic | BindingFlags.Instance);
-            if (exchangeDataField == null)
-            {
-                report.Add("✗ ERROR: Could not find exchangeData field");
-                return (null, null, null);
-            }
-
-            var exchangeData = exchangeDataField.GetValue(model);
-            var exchangeDataType = exchangeData.GetType();
-            return (model, exchangeData, exchangeDataType);
+            report.Add("");
         }
 
         private static int InspectElements(ElementDataModel model, List<string> report, bool includeDetails)
