@@ -1215,35 +1215,36 @@ namespace DataExchangeNodes.DataExchange
                             try
                             {
                                 elementDataModel = (ElementDataModel)createWithClient.Invoke(null, new object[] { client });
-                            diagnostics.Add($"  ✓ Created ElementDataModel using Create(IClient)");
-                            diagnostics.Add($"  ⚠️ WARNING: Create(IClient) creates EMPTY model - does NOT load existing exchange data!");
-                            diagnostics.Add($"  ⚠️ NOTE: ExchangeIdentifier will be set on ExchangeData (not ElementDataModel) to link to exchange");
-                            
-                            // Try to set identifier on ElementDataModel if possible (may not be writable)
-                            var identifierProperty = elementDataModelType.GetProperty("ExchangeIdentifier", BindingFlags.Public | BindingFlags.Instance | BindingFlags.NonPublic);
-                            if (identifierProperty != null && identifierProperty.CanWrite)
-                            {
-                                try
+                                diagnostics.Add($"  ✓ Created ElementDataModel using Create(IClient)");
+                                diagnostics.Add($"  ⚠️ WARNING: Create(IClient) creates EMPTY model - does NOT load existing exchange data!");
+                                diagnostics.Add($"  ⚠️ NOTE: ExchangeIdentifier will be set on ExchangeData (not ElementDataModel) to link to exchange");
+                                
+                                // Try to set identifier on ElementDataModel if possible (may not be writable)
+                                var identifierProperty = elementDataModelType.GetProperty("ExchangeIdentifier", BindingFlags.Public | BindingFlags.Instance | BindingFlags.NonPublic);
+                                if (identifierProperty != null && identifierProperty.CanWrite)
                                 {
-                                    identifierProperty.SetValue(elementDataModel, identifier);
-                                    diagnostics.Add($"  ✓ Set ExchangeIdentifier on ElementDataModel: ExchangeId={identifier.ExchangeId}, CollectionId={identifier.CollectionId}, HubId={identifier.HubId ?? "null"}");
+                                    try
+                                    {
+                                        identifierProperty.SetValue(elementDataModel, identifier);
+                                        diagnostics.Add($"  ✓ Set ExchangeIdentifier on ElementDataModel: ExchangeId={identifier.ExchangeId}, CollectionId={identifier.CollectionId}, HubId={identifier.HubId ?? "null"}");
+                                    }
+                                    catch (Exception setEx)
+                                    {
+                                        diagnostics.Add($"  ⚠️ Could not set ExchangeIdentifier on ElementDataModel: {setEx.Message}");
+                                        diagnostics.Add($"  ⚠️ Will set it on ExchangeData instead (this should still work)");
+                                    }
                                 }
-                                catch (Exception setEx)
+                                else
                                 {
-                                    diagnostics.Add($"  ⚠️ Could not set ExchangeIdentifier on ElementDataModel: {setEx.Message}");
+                                    diagnostics.Add($"  ⚠️ ExchangeIdentifier property not found or not writable on ElementDataModel");
                                     diagnostics.Add($"  ⚠️ Will set it on ExchangeData instead (this should still work)");
                                 }
                             }
-                            else
+                            catch (Exception ex)
                             {
-                                diagnostics.Add($"  ⚠️ ExchangeIdentifier property not found or not writable on ElementDataModel");
-                                diagnostics.Add($"  ⚠️ Will set it on ExchangeData instead (this should still work)");
+                                diagnostics.Add($"  ⚠️ Create(IClient) failed: {ex.Message}");
+                                // Continue to try other Create methods
                             }
-                        }
-                        catch (Exception ex)
-                        {
-                            diagnostics.Add($"  ⚠️ Create(IClient) failed: {ex.Message}");
-                            // Continue to try other Create methods
                         }
                     }
                     
