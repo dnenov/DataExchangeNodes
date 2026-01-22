@@ -49,21 +49,14 @@ namespace DataExchangeNodes.DataExchange
                     return CreateErrorResult(diagnostics, stepFilePaths, geometryCount);
                 }
 
-                // Get Client instance using centralized DataExchangeClient
-                var client = DataExchangeClient.GetClient();
-                if (client == null)
+                // Check if Client is initialized (DataExchangeClient.GetElementDataModelAsync will handle errors)
+                if (!DataExchangeClient.IsInitialized())
                 {
-                    diagnostics.Add("✗ ERROR: Could not get Client instance. Make sure you have selected an Exchange first using the SelectExchangeElements node.");
+                    diagnostics.Add("✗ ERROR: Client is not initialized. Make sure you have selected an Exchange first using the SelectExchangeElements node.");
                     return CreateErrorResult(diagnostics, stepFilePaths, geometryCount);
                 }
 
-                if (!(client is IClient iClient))
-                {
-                    diagnostics.Add($"✗ ERROR: Client instance is not IClient: {client.GetType().FullName}");
-                    return CreateErrorResult(diagnostics, stepFilePaths, geometryCount);
-                }
-
-                diagnostics.Add($"✓ Found Client instance: {client.GetType().FullName}");
+                diagnostics.Add($"✓ Client is initialized");
 
                 // Create DataExchangeIdentifier
                 var identifier = new DataExchangeIdentifier
@@ -79,11 +72,11 @@ namespace DataExchangeNodes.DataExchange
 
                 diagnostics.Add($"✓ Created DataExchangeIdentifier");
 
-                // Get ElementDataModel
+                // Get ElementDataModel using centralized method (gets latest revision automatically)
                 var stopwatch = Stopwatch.StartNew();
-                var elementDataModelResponse = iClient.GetElementDataModelAsync(identifier).Result;
+                var elementDataModelResponse = Task.Run(async () => await DataExchangeClient.GetElementDataModelAsync(identifier, CancellationToken.None)).Result;
                 stopwatch.Stop();
-                diagnostics.Add($"⏱️ GetElementDataModelAsync: {stopwatch.ElapsedMilliseconds}ms ({stopwatch.Elapsed.TotalSeconds:F3}s)");
+                diagnostics.Add($"⏱️ GetElementDataModelAsync (with latest revision): {stopwatch.ElapsedMilliseconds}ms ({stopwatch.Elapsed.TotalSeconds:F3}s)");
 
                 ElementDataModel elementDataModel = null;
                 if (elementDataModelResponse != null)
@@ -115,8 +108,16 @@ namespace DataExchangeNodes.DataExchange
                 
                 stopwatch.Restart();
                 
+                // Get the client instance
+                var client = DataExchangeClient.GetClient();
+                if (client == null)
+                {
+                    diagnostics.Add("✗ ERROR: Client is null");
+                    return CreateErrorResult(diagnostics, stepFilePaths, geometryCount);
+                }
+
                 // Check if Client has DownloadCompleteExchangeAsSTEP method
-                var downloadStepMethod = iClient.GetType().GetMethod(
+                var downloadStepMethod = client.GetType().GetMethod(
                     "DownloadCompleteExchangeAsSTEP",
                     BindingFlags.Public | BindingFlags.Instance,
                     null,
@@ -125,12 +126,12 @@ namespace DataExchangeNodes.DataExchange
                 if (downloadStepMethod == null)
                 {
                     diagnostics.Add($"✗ ERROR: DownloadCompleteExchangeAsSTEP method not found on Client");
-                    diagnostics.Add($"  Available methods: {string.Join(", ", iClient.GetType().GetMethods(BindingFlags.Public | BindingFlags.Instance).Where(m => m.Name.Contains("Download")).Select(m => m.Name))}");
+                    diagnostics.Add($"  Available methods: {string.Join(", ", client.GetType().GetMethods(BindingFlags.Public | BindingFlags.Instance).Where(m => m.Name.Contains("Download")).Select(m => m.Name))}");
                     return CreateErrorResult(diagnostics, stepFilePaths, geometryCount);
                 }
                 
                 // Call the official SDK method (returns IResponse<string>)
-                var downloadResponse = downloadStepMethod.Invoke(iClient, new object[] { identifier, null, CancellationToken.None });
+                var downloadResponse = downloadStepMethod.Invoke(client, new object[] { identifier, null, CancellationToken.None });
                 var stepFilePath = ExtractResponseValue<string>(downloadResponse, diagnostics);
                 
                 stopwatch.Stop();

@@ -72,21 +72,22 @@ namespace DataExchangeNodes.DataExchange
                     diagnostics.Add($"✓ File extension validated: {extension} (STEP format)");
                 }
 
-                // Get Client instance using centralized DataExchangeClient
+                // Check if Client is initialized (DataExchangeClient.GetElementDataModelAsync will handle errors)
+                if (!DataExchangeClient.IsInitialized())
+                {
+                    diagnostics.Add("✗ ERROR: Client is not initialized. Make sure you have selected an Exchange first using the SelectExchangeElements node.");
+                    return CreateErrorResult(diagnostics, geometryCount, uploadInfo);
+                }
+
+                diagnostics.Add($"✓ Client is initialized");
+
+                // Get the client instance once for reuse throughout the method
                 var client = DataExchangeClient.GetClient();
                 if (client == null)
                 {
-                    diagnostics.Add("✗ ERROR: Could not get Client instance. Make sure you have selected an Exchange first using the SelectExchangeElements node.");
+                    diagnostics.Add("✗ ERROR: Client is null");
                     return CreateErrorResult(diagnostics, geometryCount, uploadInfo);
                 }
-
-                if (!(client is IClient iClient))
-                {
-                    diagnostics.Add($"✗ ERROR: Client instance is not IClient: {client.GetType().FullName}");
-                    return CreateErrorResult(diagnostics, geometryCount, uploadInfo);
-                }
-
-                diagnostics.Add($"✓ Found Client instance: {client.GetType().FullName}");
 
                 // Create DataExchangeIdentifier
                 var identifier = new DataExchangeIdentifier
@@ -108,11 +109,11 @@ namespace DataExchangeNodes.DataExchange
                 
                 diagnostics.Add($"✓ Created DataExchangeIdentifier");
 
-                // Get ElementDataModel
+                // Get ElementDataModel using centralized method (gets latest revision automatically)
                 var stopwatch = Stopwatch.StartNew();
-                var elementDataModelResponse = iClient.GetElementDataModelAsync(identifier).Result;
+                var elementDataModelResponse = Task.Run(async () => await DataExchangeClient.GetElementDataModelAsync(identifier, CancellationToken.None)).Result;
                 stopwatch.Stop();
-                diagnostics.Add($"⏱️ GetElementDataModelAsync: {stopwatch.ElapsedMilliseconds}ms ({stopwatch.Elapsed.TotalSeconds:F3}s)");
+                diagnostics.Add($"⏱️ GetElementDataModelAsync (with latest revision): {stopwatch.ElapsedMilliseconds}ms ({stopwatch.Elapsed.TotalSeconds:F3}s)");
 
                 ElementDataModel elementDataModel = null;
                 if (elementDataModelResponse != null)
@@ -138,7 +139,7 @@ namespace DataExchangeNodes.DataExchange
                     // Try to create ElementDataModel using official SDK
                     try
                     {
-                        elementDataModel = ElementDataModel.Create(iClient);
+                        elementDataModel = ElementDataModel.Create(client);
                         diagnostics.Add("✓ Created ElementDataModel using ElementDataModel.Create(IClient)");
                     }
                     catch (Exception ex)
@@ -432,7 +433,7 @@ namespace DataExchangeNodes.DataExchange
                 diagnostics.Add($"  Uploading {geometries.Count} geometry/geometries to element '{elementName}'");
                 stopwatch.Restart();
                 
-                var syncTask = iClient.SyncExchangeDataAsync(identifier, elementDataModel, CancellationToken.None);
+                var syncTask = client.SyncExchangeDataAsync(identifier, elementDataModel, CancellationToken.None);
                 syncTask.Wait();
                 
                 stopwatch.Stop();
@@ -505,7 +506,7 @@ namespace DataExchangeNodes.DataExchange
                         paramTypes = new[] { typeof(DataExchangeIdentifier) };
                     }
                     
-                    var getExchangeDetailsMethod = iClient.GetType().GetMethod("GetExchangeDetailsAsync", 
+                    var getExchangeDetailsMethod = client.GetType().GetMethod("GetExchangeDetailsAsync", 
                         BindingFlags.Public | BindingFlags.Instance,
                         null,
                         paramTypes,
@@ -513,7 +514,7 @@ namespace DataExchangeNodes.DataExchange
                     
                     if (getExchangeDetailsMethod != null)
                     {
-                        var detailsTask = getExchangeDetailsMethod.Invoke(iClient, new object[] { identifier, CancellationToken.None });
+                        var detailsTask = getExchangeDetailsMethod.Invoke(client, new object[] { identifier, CancellationToken.None });
                         if (detailsTask != null)
                         {
                             var detailsResult = ((dynamic)detailsTask).Result;

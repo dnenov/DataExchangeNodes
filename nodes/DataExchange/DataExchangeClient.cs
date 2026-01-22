@@ -1,7 +1,13 @@
 using System;
+using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using Autodesk.DataExchange;
 using Autodesk.DataExchange.Core;
+using Autodesk.DataExchange.Core.Interface;
+using Autodesk.DataExchange.Core.Models;
+using Autodesk.DataExchange.DataModels;
+using Autodesk.DataExchange.Models;
 
 namespace DataExchangeNodes.DataExchange
 {
@@ -77,6 +83,126 @@ namespace DataExchangeNodes.DataExchange
         {
             _client = null;
             _sdkOptions = null;
+        }
+
+        /// <summary>
+        /// Gets the latest revision ID for the specified exchange.
+        /// Returns null if no revisions are found or if the client is not initialized.
+        /// 
+        /// Pattern matches: ReadExchangesData.GetCurrentExchangeDataAndStepFile (grasshopper-connector line 236-237)
+        /// Uses .First() to get the first revision from the response (revisions are typically ordered with latest first)
+        /// </summary>
+        /// <param name="exchangeIdentifier">The exchange identifier</param>
+        /// <returns>The latest revision ID, or null if not found</returns>
+        public static async Task<string> GetLatestRevisionIdAsync(DataExchangeIdentifier exchangeIdentifier)
+        {
+            if (_client == null)
+            {
+                return null;
+            }
+
+            try
+            {
+                // Pattern matches: ReadExchangesData.GetCurrentExchangeDataAndStepFile (grasshopper-connector line 236)
+                var revisionsResponse = await _client.GetExchangeRevisionsAsync(exchangeIdentifier);
+                if (revisionsResponse == null || revisionsResponse.Value == null || !revisionsResponse.Value.Any())
+                {
+                    return null;
+                }
+
+                // Pattern matches: ReadExchangesData.GetCurrentExchangeDataAndStepFile (grasshopper-connector line 237)
+                // Use .First() - revisions are typically ordered with latest first
+                string firstRev = revisionsResponse.Value.First().Id;
+                return firstRev;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Gets the ElementDataModel for the specified exchange.
+        /// This method follows the exact pattern from grasshopper-connector's ReadExchangesData.GetCurrentExchangeDataAndStepFile.
+        /// 
+        /// Pattern matches: ReadExchangesData.GetCurrentExchangeDataAndStepFile (grasshopper-connector line 240)
+        /// - Gets ElementDataModel using just the identifier, without revision parameter
+        /// - The SDK automatically uses the latest revision when no revision parameter is specified
+        /// 
+        /// Note: This matches grasshopper-connector exactly - they call GetElementDataModelAsync with JUST the identifier.
+        /// </summary>
+        /// <param name="exchangeIdentifier">The exchange identifier</param>
+        /// <param name="cancellationToken">Cancellation token</param>
+        /// <returns>The ElementDataModel response, or null if not available</returns>
+        public static async Task<IResponse<ElementDataModel>> GetElementDataModelAsync(DataExchangeIdentifier exchangeIdentifier, CancellationToken cancellationToken = default)
+        {
+            if (_client == null)
+            {
+                return null;
+            }
+
+            try
+            {
+                // Match grasshopper-connector exactly: call GetElementDataModelAsync with JUST the identifier
+                // This uses the overload without revision parameter, which automatically gets the latest revision
+                // Pattern matches: ReadExchangesData.GetCurrentExchangeDataAndStepFile (grasshopper-connector line 240)
+                var exchangeDataResponse = Task.Run(async () => await _client.GetElementDataModelAsync(exchangeIdentifier)).Result;
+                return exchangeDataResponse;
+            }
+            catch
+            {
+                // Return null on error to match behavior
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Gets the ElementDataModel for the specified exchange and extracts the value, handling errors properly.
+        /// This is a convenience method that checks IsSuccess and uses ValueOrDefault to safely extract the model.
+        /// </summary>
+        /// <param name="exchangeIdentifier">The exchange identifier</param>
+        /// <param name="cancellationToken">Cancellation token</param>
+        /// <returns>The ElementDataModel if successful, or null if failed or not available</returns>
+        public static async Task<ElementDataModel> GetElementDataModelValueAsync(DataExchangeIdentifier exchangeIdentifier, CancellationToken cancellationToken = default)
+        {
+            var response = await GetElementDataModelAsync(exchangeIdentifier, cancellationToken);
+            if (response == null)
+            {
+                return null;
+            }
+
+            // Use ValueOrDefault which safely returns null for failed responses
+            return response.ValueOrDefault;
+        }
+
+        /// <summary>
+        /// Gets the ElementDataModel for the specified exchange with full error information.
+        /// Returns both the model (if successful) and error details (if failed).
+        /// </summary>
+        /// <param name="exchangeIdentifier">The exchange identifier</param>
+        /// <param name="cancellationToken">Cancellation token</param>
+        /// <returns>A tuple with the ElementDataModel (or null), IsSuccess flag, and error messages</returns>
+        public static async Task<(ElementDataModel model, bool isSuccess, string errorMessage)> GetElementDataModelWithErrorInfoAsync(
+            DataExchangeIdentifier exchangeIdentifier, 
+            CancellationToken cancellationToken = default)
+        {
+            var response = await GetElementDataModelAsync(exchangeIdentifier, cancellationToken);
+            if (response == null)
+            {
+                return (null, false, "GetElementDataModelAsync returned null response");
+            }
+
+            var isSuccess = response.IsSuccess;
+            var model = response.ValueOrDefault;
+            
+            string errorMessage = null;
+            if (!isSuccess && response.Errors != null && response.Errors.Any())
+            {
+                var errorMessages = response.Errors.Select(e => e.Message ?? e.GetType().Name).ToList();
+                errorMessage = string.Join("; ", errorMessages);
+            }
+
+            return (model, isSuccess, errorMessage);
         }
     }
 }

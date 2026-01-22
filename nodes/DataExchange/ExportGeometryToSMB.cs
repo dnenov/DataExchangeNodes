@@ -1053,15 +1053,51 @@ namespace DataExchangeNodes.DataExchange
 
             diagnostics.Add($"  Response type: {response.GetType().FullName}");
 
-            // Extract ElementDataModel from Response<ElementDataModel> (same pattern as InspectExchange.cs)
+            // Check if response is successful (CRITICAL: must check IsSuccess before accessing Value)
+            var isSuccessProp = response.GetType().GetProperty("IsSuccess");
+            bool isSuccess = true;
+            if (isSuccessProp != null)
+            {
+                isSuccess = (bool)(isSuccessProp.GetValue(response) ?? false);
+                diagnostics.Add($"  Response.IsSuccess: {isSuccess}");
+            }
+            
+            if (!isSuccess)
+            {
+                // Check for errors
+                var errorMessages = new List<string> { "Unknown error" };
+                var errorsProp = response.GetType().GetProperty("Errors");
+                if (errorsProp != null)
+                {
+                    var errors = errorsProp.GetValue(response);
+                    if (errors != null)
+                    {
+                        var errorsCollection = errors as System.Collections.IEnumerable;
+                        if (errorsCollection != null)
+                        {
+                            errorMessages.Clear();
+                            foreach (var error in errorsCollection)
+                            {
+                                var messageProp = error?.GetType().GetProperty("Message");
+                                var message = messageProp?.GetValue(error)?.ToString() ?? error?.GetType().Name ?? "Unknown error";
+                                errorMessages.Add(message);
+                            }
+                            diagnostics.Add($"  Response.Errors: {string.Join("; ", errorMessages)}");
+                        }
+                    }
+                }
+                throw new InvalidOperationException($"GetElementDataModelAsync failed: {string.Join("; ", errorMessages)}");
+            }
+            
+            // Extract ElementDataModel from Response<ElementDataModel> using ValueOrDefault (safe for failed responses)
             ElementDataModel elementDataModel = null;
             var responseType = response.GetType();
-            var valueProp = responseType.GetProperty("Value");
+            var valueOrDefaultProp = responseType.GetProperty("ValueOrDefault");
             
-            if (valueProp != null)
+            if (valueOrDefaultProp != null)
             {
-                var value = valueProp.GetValue(response);
-                diagnostics.Add($"  Value property found, value type: {value?.GetType().FullName ?? "null"}");
+                var value = valueOrDefaultProp.GetValue(response);
+                diagnostics.Add($"  ValueOrDefault property found, value type: {value?.GetType().FullName ?? "null"}");
                 
                 // Use 'as' cast (safer, like InspectExchange does)
                 elementDataModel = value as ElementDataModel;
@@ -1108,92 +1144,148 @@ namespace DataExchangeNodes.DataExchange
                 diagnostics.Add("  Attempting to create ElementDataModel - this should load existing data if the exchange has any...");
                 
                 // Try to find ElementDataModel.Create static method
+                // CRITICAL: Get ALL Create methods, not just the first one
                 var elementDataModelType = typeof(ElementDataModel);
-                var createMethod = elementDataModelType.GetMethod("Create", BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy);
+                var allCreateMethods = elementDataModelType.GetMethods(BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy)
+                    .Where(m => m.Name == "Create")
+                    .ToList();
                 
-                if (createMethod != null)
+                diagnostics.Add($"  Found {allCreateMethods.Count} Create method(s)");
+                foreach (var method in allCreateMethods)
                 {
-                    var parameters = createMethod.GetParameters();
-                    diagnostics.Add($"  Found Create method with parameters: {string.Join(", ", parameters.Select(p => p.ParameterType.Name))}");
+                    var methodParams = method.GetParameters();
+                    diagnostics.Add($"    - Create({string.Join(", ", methodParams.Select(p => p.ParameterType.Name))})");
+                }
+                
+                if (allCreateMethods.Any())
+                {
+                    // Try Create(IClient, DataExchangeIdentifier) FIRST - this should load existing data and link to exchange
+                    var createWithClientAndId = allCreateMethods.FirstOrDefault(m => 
+                        m.GetParameters().Length == 2 && 
+                        m.GetParameters()[0].ParameterType.IsAssignableFrom(clientType) &&
+                        m.GetParameters()[1].ParameterType == typeof(DataExchangeIdentifier));
                     
-                    // Try Create(IClient, DataExchangeIdentifier) FIRST - this should load existing data
-                    if (parameters.Length == 2 && 
-                        parameters[0].ParameterType.IsAssignableFrom(clientType) &&
-                        parameters[1].ParameterType == typeof(DataExchangeIdentifier))
+                    if (createWithClientAndId != null)
                     {
                         try
                         {
-                            elementDataModel = (ElementDataModel)createMethod.Invoke(null, new object[] { client, identifier });
+                            elementDataModel = (ElementDataModel)createWithClientAndId.Invoke(null, new object[] { client, identifier });
                             diagnostics.Add($"  ✓ Created ElementDataModel using Create(IClient, DataExchangeIdentifier)");
-                            diagnostics.Add($"  ⚠️ NOTE: If exchange has existing data, verify it was loaded before proceeding!");
+                            diagnostics.Add($"  ✓ This method should properly link the model to the exchange");
                         }
                         catch (Exception ex)
                         {
                             diagnostics.Add($"  ⚠️ Create(IClient, DataExchangeIdentifier) failed: {ex.Message}");
                         }
                     }
-                    // Try Create(DataExchangeIdentifier) - should also load existing data
-                    else if (parameters.Length == 1 && parameters[0].ParameterType == typeof(DataExchangeIdentifier))
+                    
+                    // Try Create(DataExchangeIdentifier) - should also load existing data and link to exchange
+                    if (elementDataModel == null)
                     {
-                        try
+                        var createWithId = allCreateMethods.FirstOrDefault(m => 
+                            m.GetParameters().Length == 1 && 
+                            m.GetParameters()[0].ParameterType == typeof(DataExchangeIdentifier));
+                        
+                        if (createWithId != null)
                         {
-                            elementDataModel = (ElementDataModel)createMethod.Invoke(null, new object[] { identifier });
-                            diagnostics.Add($"  ✓ Created ElementDataModel using Create(DataExchangeIdentifier)");
-                            diagnostics.Add($"  ⚠️ NOTE: If exchange has existing data, verify it was loaded before proceeding!");
-                        }
-                        catch (Exception ex)
-                        {
-                            diagnostics.Add($"  ⚠️ Create(DataExchangeIdentifier) failed: {ex.Message}");
+                            try
+                            {
+                                elementDataModel = (ElementDataModel)createWithId.Invoke(null, new object[] { identifier });
+                                diagnostics.Add($"  ✓ Created ElementDataModel using Create(DataExchangeIdentifier)");
+                                diagnostics.Add($"  ✓ This method should properly link the model to the exchange");
+                            }
+                            catch (Exception ex)
+                            {
+                                diagnostics.Add($"  ⚠️ Create(DataExchangeIdentifier) failed: {ex.Message}");
+                            }
                         }
                     }
+                    
                     // Try Create(IClient) - most common case (but might not load existing data)
-                    if (elementDataModel == null && parameters.Length == 1 && parameters[0].ParameterType.IsAssignableFrom(clientType))
+                    // CRITICAL: This creates an EMPTY model - we MUST set ExchangeIdentifier IMMEDIATELY
+                    // and the model must be linked to the exchange BEFORE we add any elements
+                    if (elementDataModel == null)
                     {
-                        try
+                        var createWithClient = allCreateMethods.FirstOrDefault(m => 
+                            m.GetParameters().Length == 1 && 
+                            m.GetParameters()[0].ParameterType.IsAssignableFrom(clientType));
+                        
+                        if (createWithClient != null)
                         {
-                            elementDataModel = (ElementDataModel)createMethod.Invoke(null, new object[] { client });
+                            try
+                            {
+                                elementDataModel = (ElementDataModel)createWithClient.Invoke(null, new object[] { client });
                             diagnostics.Add($"  ✓ Created ElementDataModel using Create(IClient)");
-                            diagnostics.Add($"  ⚠️ WARNING: Create(IClient) may not load existing exchange data!");
-                            diagnostics.Add($"  ⚠️ Setting ExchangeIdentifier to ensure we're working with the correct exchange...");
+                            diagnostics.Add($"  ⚠️ WARNING: Create(IClient) creates EMPTY model - does NOT load existing exchange data!");
+                            diagnostics.Add($"  ⚠️ NOTE: ExchangeIdentifier will be set on ExchangeData (not ElementDataModel) to link to exchange");
                             
-                            // Try to set the identifier to ensure we're working with the right exchange
-                            var identifierProperty = elementDataModelType.GetProperty("ExchangeIdentifier", BindingFlags.Public | BindingFlags.Instance);
+                            // Try to set identifier on ElementDataModel if possible (may not be writable)
+                            var identifierProperty = elementDataModelType.GetProperty("ExchangeIdentifier", BindingFlags.Public | BindingFlags.Instance | BindingFlags.NonPublic);
                             if (identifierProperty != null && identifierProperty.CanWrite)
                             {
-                                identifierProperty.SetValue(elementDataModel, identifier);
-                                diagnostics.Add($"  ✓ Set ExchangeIdentifier on ElementDataModel");
+                                try
+                                {
+                                    identifierProperty.SetValue(elementDataModel, identifier);
+                                    diagnostics.Add($"  ✓ Set ExchangeIdentifier on ElementDataModel: ExchangeId={identifier.ExchangeId}, CollectionId={identifier.CollectionId}, HubId={identifier.HubId ?? "null"}");
+                                }
+                                catch (Exception setEx)
+                                {
+                                    diagnostics.Add($"  ⚠️ Could not set ExchangeIdentifier on ElementDataModel: {setEx.Message}");
+                                    diagnostics.Add($"  ⚠️ Will set it on ExchangeData instead (this should still work)");
+                                }
+                            }
+                            else
+                            {
+                                diagnostics.Add($"  ⚠️ ExchangeIdentifier property not found or not writable on ElementDataModel");
+                                diagnostics.Add($"  ⚠️ Will set it on ExchangeData instead (this should still work)");
                             }
                         }
                         catch (Exception ex)
                         {
                             diagnostics.Add($"  ⚠️ Create(IClient) failed: {ex.Message}");
+                            // Continue to try other Create methods
                         }
                     }
+                    
                     // Try parameterless Create() - last resort
-                    else if (elementDataModel == null && parameters.Length == 0)
+                    if (elementDataModel == null)
                     {
-                        try
+                        var createParameterless = allCreateMethods.FirstOrDefault(m => m.GetParameters().Length == 0);
+                        
+                        if (createParameterless != null)
                         {
-                            elementDataModel = (ElementDataModel)createMethod.Invoke(null, null);
-                            diagnostics.Add($"  ✓ Created ElementDataModel using Create()");
-                            diagnostics.Add($"  ⚠️ WARNING: Create() creates empty model - setting ExchangeIdentifier...");
-                            
-                            // Try to set the identifier
-                            var identifierProperty = elementDataModelType.GetProperty("ExchangeIdentifier", BindingFlags.Public | BindingFlags.Instance);
-                            if (identifierProperty != null && identifierProperty.CanWrite)
+                            try
                             {
-                                identifierProperty.SetValue(elementDataModel, identifier);
-                                diagnostics.Add($"  ✓ Set ExchangeIdentifier on ElementDataModel");
+                                elementDataModel = (ElementDataModel)createParameterless.Invoke(null, null);
+                                diagnostics.Add($"  ✓ Created ElementDataModel using Create()");
+                                diagnostics.Add($"  ⚠️ WARNING: Create() creates empty model - setting ExchangeIdentifier...");
+                                
+                                // Try to set the identifier
+                                var identifierProperty = elementDataModelType.GetProperty("ExchangeIdentifier", BindingFlags.Public | BindingFlags.Instance | BindingFlags.NonPublic);
+                                if (identifierProperty != null && identifierProperty.CanWrite)
+                                {
+                                    try
+                                    {
+                                        identifierProperty.SetValue(elementDataModel, identifier);
+                                        diagnostics.Add($"  ✓ Set ExchangeIdentifier on ElementDataModel");
+                                    }
+                                    catch (Exception setEx)
+                                    {
+                                        diagnostics.Add($"  ⚠️ Could not set ExchangeIdentifier on ElementDataModel: {setEx.Message}");
+                                        diagnostics.Add($"  ⚠️ Will set it on ExchangeData instead (this should still work)");
+                                    }
+                                }
+                                else
+                                {
+                                    diagnostics.Add($"  ⚠️ ExchangeIdentifier property not found or not writable on ElementDataModel");
+                                    diagnostics.Add($"  ⚠️ Will set it on ExchangeData instead (this should still work)");
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                diagnostics.Add($"  ⚠️ Create() failed: {ex.Message}");
                             }
                         }
-                        catch (Exception ex)
-                        {
-                            diagnostics.Add($"  ⚠️ Create() failed: {ex.Message}");
-                        }
-                    }
-                    else if (elementDataModel == null)
-                    {
-                        diagnostics.Add($"  ⚠️ Create method found but has unexpected signature: {string.Join(", ", parameters.Select(p => p.ParameterType.Name))}");
                     }
                 }
                 
@@ -1244,11 +1336,11 @@ namespace DataExchangeNodes.DataExchange
 
             if (elementDataModel == null)
             {
-                var valueInfo = valueProp != null 
-                    ? $"Value type: {valueProp.GetValue(response)?.GetType().FullName ?? "null"}" 
-                    : "No Value property";
+                var valueInfo = valueOrDefaultProp != null 
+                    ? $"ValueOrDefault type: {valueOrDefaultProp.GetValue(response)?.GetType().FullName ?? "null"}" 
+                    : "No ValueOrDefault property";
                 throw new InvalidOperationException(
-                        $"Could not extract or create ElementDataModel. Response Value was null (new exchange), and could not find Create method or suitable constructor. {valueInfo}");
+                        $"Could not extract or create ElementDataModel. Response ValueOrDefault was null (new exchange), and could not find Create method or suitable constructor. {valueInfo}");
             }
             else
             {
@@ -3745,6 +3837,12 @@ END-ISO-10303-21;
                 }
                 var (exchangeData, exchangeDataType) = TimeOperation("GetExchangeData (reflection)", 
                     () => GetExchangeData(elementDataModel, diagnostics), diagnostics);
+                
+                // CRITICAL: Set ExchangeIdentifier on ExchangeData IMMEDIATELY after getting it
+                // This ensures the ExchangeData is properly linked to the exchange BEFORE we add any elements
+                diagnostics.Add($"\nSetting ExchangeIdentifier on ExchangeData to link it to exchange...");
+                TimeOperation("SetExchangeIdentifierIfNeeded (before adding elements)", 
+                    () => SetExchangeIdentifierIfNeeded(exchangeData, exchangeDataType, identifier, diagnostics), diagnostics);
 
                 // Find required types
                 var foundTypes = TimeOperation("FindRequiredTypes (reflection - type discovery)", 
@@ -3935,6 +4033,45 @@ END-ISO-10303-21;
                     {
                         diagnostics.Add($"  ⚠️ BinaryReference not set for any GeometryAsset, but flow completed");
                         success = true; // Still mark as success since the flow completed
+                    }
+                    
+                    // CRITICAL: Reload ElementDataModel after sync to verify it was persisted
+                    diagnostics.Add($"\n=== Reloading ElementDataModel after sync to verify persistence ===");
+                    try
+                    {
+                        var reloadedModel = TimeOperation("GetElementDataModelAsync (reload after sync)", 
+                            () => GetElementDataModelAsync(client, clientType, identifier, diagnostics), diagnostics);
+                        
+                        if (reloadedModel != null)
+                        {
+                            diagnostics.Add($"  ✓ Successfully reloaded ElementDataModel after sync");
+                            diagnostics.Add($"  Reloaded model type: {reloadedModel.GetType().FullName}");
+                            
+                            // Check if elements are present
+                            var elementsProp = typeof(ElementDataModel).GetProperty("Elements", BindingFlags.Public | BindingFlags.Instance);
+                            if (elementsProp != null)
+                            {
+                                var elements = elementsProp.GetValue(reloadedModel) as System.Collections.IEnumerable;
+                                if (elements != null)
+                                {
+                                    var elementsList = elements.Cast<object>().ToList();
+                                    diagnostics.Add($"  Reloaded model has {elementsList.Count} element(s)");
+                                }
+                            }
+                        }
+                        else
+                        {
+                            diagnostics.Add($"  ✗ ERROR: Could not reload ElementDataModel after sync - it's still null!");
+                            diagnostics.Add($"  This means the data was NOT persisted to the server!");
+                        }
+                    }
+                    catch (Exception reloadEx)
+                    {
+                        diagnostics.Add($"  ✗ ERROR reloading ElementDataModel after sync: {reloadEx.GetType().Name}: {reloadEx.Message}");
+                        if (reloadEx.InnerException != null)
+                        {
+                            diagnostics.Add($"    Inner: {reloadEx.InnerException.Message}");
+                        }
                     }
                 }
                 catch (Exception ex)

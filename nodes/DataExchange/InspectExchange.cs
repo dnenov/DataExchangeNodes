@@ -8,9 +8,11 @@ using System.Threading.Tasks;
 using Autodesk.DesignScript.Runtime;
 using Autodesk.DataExchange;
 using Autodesk.DataExchange.Core;
+using Autodesk.DataExchange.Core.Interface;
 using Autodesk.DataExchange.Core.Models;
 using Autodesk.DataExchange.DataModels;
 using DataExchangeNodes.DataExchange;
+using Autodesk.DataExchange.Models;
 
 namespace DataExchangeNodes.DataExchange
 {
@@ -119,24 +121,163 @@ namespace DataExchangeNodes.DataExchange
 
                 // Create DataExchangeIdentifier
                 var identifier = CreateDataExchangeIdentifier(exchange);
-
-                // Get ElementDataModel using the direct Client method (same pattern as grasshopper-connector)
-                ElementDataModel model = null;
+                
+                // Diagnostic: Log identifier details and verify they match the Exchange object
+                report.Add($"=== DataExchangeIdentifier Details ===");
+                report.Add($"From Exchange object:");
+                report.Add($"  Exchange.ExchangeId: {exchange?.ExchangeId ?? "null"}");
+                report.Add($"  Exchange.CollectionId: {exchange?.CollectionId ?? "null"}");
+                report.Add($"  Exchange.HubId: {exchange?.HubId ?? "null"}");
+                report.Add($"");
+                report.Add($"Created DataExchangeIdentifier:");
+                report.Add($"  ExchangeId: {identifier.ExchangeId ?? "null"}");
+                report.Add($"  CollectionId: {identifier.CollectionId ?? "null"}");
+                report.Add($"  HubId: {identifier.HubId ?? "null"}");
+                
+                // Verify the identifier matches the exchange
+                bool identifierValid = true;
+                if (string.IsNullOrEmpty(identifier.ExchangeId))
+                {
+                    report.Add($"✗ ERROR: ExchangeId is null or empty!");
+                    identifierValid = false;
+                }
+                if (string.IsNullOrEmpty(identifier.CollectionId))
+                {
+                    report.Add($"✗ ERROR: CollectionId is null or empty!");
+                    identifierValid = false;
+                }
+                if (string.IsNullOrEmpty(identifier.HubId))
+                {
+                    report.Add($"⚠️ WARNING: HubId is missing from Exchange - this may cause GetElementDataModelAsync to fail");
+                    report.Add($"  Attempting to get HubId from client...");
+                    
+                    // Try to get HubId from client if available
+                    try
+                    {
+                        // Check if client has GetHubIdAsync method
+                        var getHubIdMethod = client.GetType().GetMethod("GetHubIdAsync", 
+                            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+                        if (getHubIdMethod != null && !string.IsNullOrEmpty(exchange.CollectionId))
+                        {
+                            // Try to get HubId from project URN or collection
+                            // Note: This might not work if we don't have project URN
+                            report.Add($"  Client has GetHubIdAsync method, but need project URN to use it");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        report.Add($"  Could not get HubId from client: {ex.Message}");
+                    }
+                }
+                
+                if (!identifierValid)
+                {
+                    return CreateErrorResult(report, "DataExchangeIdentifier is invalid - missing required fields", customParameters, null);
+                }
+                
+                report.Add($"");
+                
+                // Get Exchange Revisions/Versions
+                report.Add("");
+                report.Add($"=== Exchange Revisions/Versions ===");
                 try
                 {
-                    var elementDataModelResponse = Task.Run(async () => await client.GetElementDataModelAsync(identifier, CancellationToken.None)).Result;
-                    model = elementDataModelResponse?.Value;
+                    var revisionsResponse = Task.Run(async () => await client.GetExchangeRevisionsAsync(identifier)).Result;
+                    if (revisionsResponse != null && revisionsResponse.Value != null && revisionsResponse.Value.Any())
+                    {
+                        var revisions = revisionsResponse.Value.ToList();
+                        report.Add($"Total Revisions: {revisions.Count}");
+                        report.Add($"");
+                        
+                        // Latest revision (first in list)
+                        var latestRevision = revisions.First();
+                        report.Add($"📌 Latest Revision:");
+                        report.Add($"  ID: {latestRevision.Id ?? "null"}");
+                        
+                        // Try to get additional properties from revision
+                        var revisionType = latestRevision.GetType();
+                        var createdDateProp = revisionType.GetProperty("CreatedDate", BindingFlags.Public | BindingFlags.Instance);
+                        if (createdDateProp != null)
+                        {
+                            var createdDate = createdDateProp.GetValue(latestRevision);
+                            report.Add($"  Created Date: {createdDate ?? "N/A"}");
+                        }
+                        
+                        var createdByProp = revisionType.GetProperty("CreatedBy", BindingFlags.Public | BindingFlags.Instance);
+                        if (createdByProp != null)
+                        {
+                            var createdBy = createdByProp.GetValue(latestRevision);
+                            report.Add($"  Created By: {createdBy ?? "N/A"}");
+                        }
+                        
+                        // Show all revisions if there are multiple
+                        if (revisions.Count > 1)
+                        {
+                            report.Add($"");
+                            report.Add($"All Revisions ({revisions.Count} total):");
+                            for (int i = 0; i < revisions.Count; i++)
+                            {
+                                var rev = revisions[i];
+                                var marker = i == 0 ? "📌 (Latest)" : $"  {i + 1}.";
+                                report.Add($"{marker} {rev.Id ?? "null"}");
+                                
+                                if (createdDateProp != null)
+                                {
+                                    var createdDate = createdDateProp.GetValue(rev);
+                                    if (createdDate != null)
+                                    {
+                                        report.Add($"     Created: {createdDate}");
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    else
+                    {
+                        report.Add($"⚠️ WARNING: No revisions found for this exchange");
+                    }
                 }
                 catch (Exception ex)
                 {
-                    report.Add($"✗ ERROR: Could not load ElementDataModel: {ex.Message}");
-                    return CreateErrorResult(report, $"Failed to get ElementDataModel: {ex.Message}", customParameters, null);
+                    report.Add($"✗ ERROR: Could not get exchange revisions: {ex.GetType().Name}: {ex.Message}");
+                    if (ex.InnerException != null)
+                    {
+                        report.Add($"  Inner Exception: {ex.InnerException.Message}");
+                    }
+                }
+                report.Add("");
+
+                // Get ElementDataModel using the dedicated async helper function
+                // Pattern matches grasshopper-connector: Task.Run(async () => await ...).Result
+                report.Add($"=== Calling GetElementDataModelAsync ===");
+                report.Add($"  Using DataExchangeIdentifier:");
+                report.Add($"    ExchangeId: {identifier.ExchangeId}");
+                report.Add($"    CollectionId: {identifier.CollectionId}");
+                report.Add($"    HubId: {identifier.HubId ?? "null"}");
+                report.Add($"");
+                
+                var (model, isSuccess, errorMessage) = Task.Run(async () => 
+                    await DataExchangeClient.GetElementDataModelWithErrorInfoAsync(identifier, CancellationToken.None)).Result;
+                
+                report.Add($"  Response.IsSuccess: {isSuccess}");
+                
+                if (!isSuccess)
+                {
+                    report.Add($"✗ ERROR: GetElementDataModelAsync failed");
+                    if (!string.IsNullOrEmpty(errorMessage))
+                    {
+                        report.Add($"  Error: {errorMessage}");
+                    }
+                    return CreateErrorResult(report, $"Could not load ElementDataModel: {errorMessage ?? "Unknown error"}", customParameters, null);
                 }
 
                 if (model == null)
                 {
-                    return CreateErrorResult(report, "Could not load ElementDataModel - response was null", customParameters, null);
+                    report.Add($"✗ ERROR: ElementDataModel is null (IsSuccess was true but model is null)");
+                    return CreateErrorResult(report, "Could not load ElementDataModel - model is null", customParameters, null);
                 }
+                
+                report.Add($"✓ Successfully loaded ElementDataModel: {model.GetType().FullName}");
 
                 // Get ExchangeData
                 var exchangeDataField = typeof(ElementDataModel).GetField("exchangeData", BindingFlags.NonPublic | BindingFlags.Instance);
@@ -240,24 +381,112 @@ namespace DataExchangeNodes.DataExchange
 
             var identifier = CreateDataExchangeIdentifier(exchange);
             
-            // Get ElementDataModel using the direct Client method
-            ElementDataModel model = null;
+            // Diagnostic: Log identifier details
+            report.Add($"DataExchangeIdentifier:");
+            report.Add($"  ExchangeId: {identifier.ExchangeId ?? "null"}");
+            report.Add($"  CollectionId: {identifier.CollectionId ?? "null"}");
+            report.Add($"  HubId: {identifier.HubId ?? "null"}");
+            
+            if (string.IsNullOrEmpty(identifier.HubId))
+            {
+                report.Add($"⚠️ WARNING: HubId is missing from Exchange - this may cause GetElementDataModelAsync to fail");
+            }
+            report.Add("");
+            
+            // Get Exchange Revisions/Versions
+            report.Add($"=== Exchange Revisions/Versions ===");
             try
             {
-                var elementDataModelResponse = Task.Run(async () => await client.GetElementDataModelAsync(identifier, CancellationToken.None)).Result;
-                model = elementDataModelResponse?.Value;
+                var revisionsResponse = Task.Run(async () => await client.GetExchangeRevisionsAsync(identifier)).Result;
+                if (revisionsResponse != null && revisionsResponse.Value != null && revisionsResponse.Value.Any())
+                {
+                    var revisions = revisionsResponse.Value.ToList();
+                    report.Add($"Total Revisions: {revisions.Count}");
+                    report.Add($"");
+                    
+                    // Latest revision (first in list)
+                    var latestRevision = revisions.First();
+                    report.Add($"📌 Latest Revision:");
+                    report.Add($"  ID: {latestRevision.Id ?? "null"}");
+                    
+                    // Try to get additional properties from revision
+                    var revisionType = latestRevision.GetType();
+                    var createdDateProp = revisionType.GetProperty("CreatedDate", BindingFlags.Public | BindingFlags.Instance);
+                    if (createdDateProp != null)
+                    {
+                        var createdDate = createdDateProp.GetValue(latestRevision);
+                        report.Add($"  Created Date: {createdDate ?? "N/A"}");
+                    }
+                    
+                    var createdByProp = revisionType.GetProperty("CreatedBy", BindingFlags.Public | BindingFlags.Instance);
+                    if (createdByProp != null)
+                    {
+                        var createdBy = createdByProp.GetValue(latestRevision);
+                        report.Add($"  Created By: {createdBy ?? "N/A"}");
+                    }
+                    
+                    // Show all revisions if there are multiple
+                    if (revisions.Count > 1)
+                    {
+                        report.Add($"");
+                        report.Add($"All Revisions ({revisions.Count} total):");
+                        for (int i = 0; i < revisions.Count; i++)
+                        {
+                            var rev = revisions[i];
+                            var marker = i == 0 ? "📌 (Latest)" : $"  {i + 1}.";
+                            report.Add($"{marker} {rev.Id ?? "null"}");
+                            
+                            if (createdDateProp != null)
+                            {
+                                var createdDate = createdDateProp.GetValue(rev);
+                                if (createdDate != null)
+                                {
+                                    report.Add($"     Created: {createdDate}");
+                                }
+                            }
+                        }
+                    }
+                }
+                else
+                {
+                    report.Add($"⚠️ WARNING: No revisions found for this exchange");
+                }
             }
             catch (Exception ex)
             {
-                report.Add($"✗ ERROR: Could not load ElementDataModel: {ex.Message}");
+                report.Add($"✗ ERROR: Could not get exchange revisions: {ex.GetType().Name}: {ex.Message}");
+                if (ex.InnerException != null)
+                {
+                    report.Add($"  Inner Exception: {ex.InnerException.Message}");
+                }
+            }
+            report.Add("");
+            
+            // Get ElementDataModel using the dedicated async helper function
+            report.Add($"Calling DataExchangeClient.GetElementDataModelWithErrorInfoAsync...");
+            var (model, isSuccess, errorMessage) = Task.Run(async () => 
+                await DataExchangeClient.GetElementDataModelWithErrorInfoAsync(identifier, CancellationToken.None)).Result;
+            
+            report.Add($"  Response.IsSuccess: {isSuccess}");
+            
+            if (!isSuccess)
+            {
+                report.Add($"✗ ERROR: GetElementDataModelAsync failed");
+                if (!string.IsNullOrEmpty(errorMessage))
+                {
+                    report.Add($"  Error: {errorMessage}");
+                }
                 return;
             }
 
             if (model == null)
             {
-                report.Add("✗ ERROR: Could not load ElementDataModel - response was null");
+                report.Add($"✗ ERROR: ElementDataModel is null (IsSuccess was true but model is null)");
                 return;
             }
+            
+            report.Add($"✓ Successfully loaded ElementDataModel: {model.GetType().FullName}");
+            report.Add("");
 
             // Get ExchangeData
             var exchangeDataField = typeof(ElementDataModel).GetField("exchangeData", BindingFlags.NonPublic | BindingFlags.Instance);
