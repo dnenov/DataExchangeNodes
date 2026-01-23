@@ -23,6 +23,8 @@ using Dynamo.Wpf;
 using CoreNodeModelsWpf.Nodes;
 using DataExchangeNodes.NodeModels.DataExchange;
 using Newtonsoft.Json;
+using Autodesk.DataExchange.Models;
+using Autodesk.DataExchange.Core.Enums;
 
 namespace DataExchangeNodes.NodeViews.DataExchange
 {
@@ -115,7 +117,7 @@ namespace DataExchangeNodes.NodeViews.DataExchange
                 var storage = new Storage(appBasePath);
                 var hostingProvider = new ACC(logger, () => authProvider.GetToken());
 
-                // Configure SDK options
+                // Configure SDK options (matching grasshopper-connector pattern)
                 var sdkOptions = new SDKOptions
                 {
                     AuthProvider = authProvider,
@@ -125,7 +127,13 @@ namespace DataExchangeNodes.NodeViews.DataExchange
                     HostApplicationName = "Dynamo",
                     HostApplicationVersion = "4.1",
                     ConnectorName = "DataExchange Nodes",
-                    ConnectorVersion = "0.1.0"
+                    ConnectorVersion = "0.1.0",
+                    GeometryConfiguration = new GeometryConfiguration()
+                    {
+                        STEPProtocol = STEPProtocol.ManagedModelBased3DEngineering,
+                        STEPTolerance = 0.01,
+                        WantAssetIdAsLabel = true
+                    }
                 };
 
                 // Initialize or reuse centralized DataExchange client

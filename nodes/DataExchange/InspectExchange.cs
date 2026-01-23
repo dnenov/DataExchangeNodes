@@ -666,12 +666,18 @@ namespace DataExchangeNodes.DataExchange
             var elementsProperty = typeof(ElementDataModel).GetProperty("Elements", BindingFlags.Public | BindingFlags.Instance);
             if (elementsProperty == null)
             {
+                report.Add("=== Elements (0) ===");
+                report.Add("  Elements property not found on ElementDataModel");
+                report.Add("");
                 return 0;
             }
 
             var elements = elementsProperty.GetValue(model) as System.Collections.IEnumerable;
             if (elements == null)
             {
+                report.Add("=== Elements (0) ===");
+                report.Add("  No elements found (Elements property is null)");
+                report.Add("");
                 return 0;
             }
 
@@ -686,17 +692,11 @@ namespace DataExchangeNodes.DataExchange
                 var lastItemsToShow = Math.Min(2, elementCount);
                 var showLastItems = elementCount > 10;
                 
-                // Show first items
+                // Show first items with detailed information
                 foreach (var element in elementsList.Take(itemsToShow))
                 {
                     idx++;
-                    var elementIdProp = element.GetType().GetProperty("Id", BindingFlags.Public | BindingFlags.Instance);
-                    var elementId = elementIdProp?.GetValue(element)?.ToString() ?? "N/A";
-
-                    var elementNameProp = element.GetType().GetProperty("Name", BindingFlags.Public | BindingFlags.Instance);
-                    var elementName = elementNameProp?.GetValue(element)?.ToString() ?? "N/A";
-
-                    report.Add($"  Element #{idx}: {elementName} (ID: {elementId})");
+                    InspectSingleElement(element, idx, model, report);
                 }
                 
                 // Show last items if there are more than 10
@@ -712,19 +712,109 @@ namespace DataExchangeNodes.DataExchange
                     foreach (var element in elementsList.Skip(elementCount - lastItemsToShow))
                     {
                         idx++;
-                        var elementIdProp = element.GetType().GetProperty("Id", BindingFlags.Public | BindingFlags.Instance);
-                        var elementId = elementIdProp?.GetValue(element)?.ToString() ?? "N/A";
-
-                        var elementNameProp = element.GetType().GetProperty("Name", BindingFlags.Public | BindingFlags.Instance);
-                        var elementName = elementNameProp?.GetValue(element)?.ToString() ?? "N/A";
-
-                        report.Add($"  Element #{idx}: {elementName} (ID: {elementId})");
+                        InspectSingleElement(element, idx, model, report);
                     }
                 }
+            }
+            else if (elementCount > 0)
+            {
+                report.Add($"  (Use includeDetails=true to see element details)");
             }
             report.Add("");
 
             return elementCount;
+        }
+
+        /// <summary>
+        /// Inspects a single element and adds detailed information to the report
+        /// Similar to grasshopper's ReceiveExchangeProcessStart element inspection
+        /// </summary>
+        private static void InspectSingleElement(object element, int idx, ElementDataModel model, List<string> report)
+        {
+            try
+            {
+                // Get basic element properties
+                var elementIdProp = element.GetType().GetProperty("Id", BindingFlags.Public | BindingFlags.Instance);
+                var elementId = elementIdProp?.GetValue(element)?.ToString() ?? "N/A";
+
+                var elementNameProp = element.GetType().GetProperty("Name", BindingFlags.Public | BindingFlags.Instance);
+                var elementName = elementNameProp?.GetValue(element)?.ToString() ?? "N/A";
+
+                report.Add($"  Element #{idx}: {elementName}");
+                report.Add($"    ID: {elementId}");
+
+                // Get Asset information (similar to grasshopper: element.Asset.Id)
+                var assetProp = element.GetType().GetProperty("Asset", BindingFlags.Public | BindingFlags.Instance | BindingFlags.NonPublic);
+                if (assetProp != null)
+                {
+                    var asset = assetProp.GetValue(element);
+                    if (asset != null)
+                    {
+                        var assetIdProp = asset.GetType().GetProperty("Id", BindingFlags.Public | BindingFlags.Instance);
+                        var assetId = assetIdProp?.GetValue(asset)?.ToString();
+                        if (!string.IsNullOrEmpty(assetId))
+                        {
+                            report.Add($"    Asset.Id: {assetId}");
+                        }
+
+                        var assetNameProp = asset.GetType().GetProperty("Name", BindingFlags.Public | BindingFlags.Instance);
+                        var assetName = assetNameProp?.GetValue(asset)?.ToString();
+                        if (!string.IsNullOrEmpty(assetName))
+                        {
+                            report.Add($"    Asset.Name: {assetName}");
+                        }
+                    }
+                }
+
+                // Get Category
+                var categoryProp = element.GetType().GetProperty("Category", BindingFlags.Public | BindingFlags.Instance);
+                if (categoryProp != null)
+                {
+                    var category = categoryProp.GetValue(element)?.ToString();
+                    if (!string.IsNullOrEmpty(category))
+                    {
+                        report.Add($"    Category: {category}");
+                    }
+                }
+
+                // Check HasGeometry
+                var hasGeometryProp = element.GetType().GetProperty("HasGeometry", BindingFlags.Public | BindingFlags.Instance);
+                if (hasGeometryProp != null)
+                {
+                    var hasGeometry = hasGeometryProp.GetValue(element);
+                    if (hasGeometry is bool hasGeom)
+                    {
+                        report.Add($"    HasGeometry: {hasGeom}");
+                    }
+                }
+
+                // Get ElementGeometry count (similar to grasshopper's element geometry inspection)
+                try
+                {
+                    var getElementGeometryMethod = typeof(ElementDataModel).GetMethod("GetElementGeometry", BindingFlags.Public | BindingFlags.Instance);
+                    if (getElementGeometryMethod != null)
+                    {
+                        var geometries = getElementGeometryMethod.Invoke(model, new[] { element }) as System.Collections.IEnumerable;
+                        if (geometries != null)
+                        {
+                            var geometriesList = geometries.Cast<object>().ToList();
+                            report.Add($"    ElementGeometry Count: {geometriesList.Count}");
+                            if (geometriesList.Count > 0)
+                            {
+                                report.Add($"    ElementGeometry Types: {string.Join(", ", geometriesList.Select(g => g.GetType().Name).Distinct())}");
+                            }
+                        }
+                    }
+                }
+                catch
+                {
+                    // GetElementGeometry might not be available or might throw - ignore
+                }
+            }
+            catch (Exception ex)
+            {
+                report.Add($"  Element #{idx}: Error inspecting element - {ex.Message}");
+            }
         }
 
         private static int InspectGeometryAssets(object exchangeData, Type exchangeDataType, List<string> report, bool includeDetails)

@@ -432,10 +432,15 @@ namespace DataExchangeNodes.DataExchange
                 diagnostics.Add($"Starting SyncExchangeDataAsync to upload geometry...");
                 diagnostics.Add($"  Uploading {geometries.Count} geometry/geometries to element '{elementName}'");
                 stopwatch.Restart();
-                
-                var syncTask = client.SyncExchangeDataAsync(identifier, elementDataModel, CancellationToken.None);
+
+                var syncTask = Task.Run(() => client.SyncExchangeDataAsync(identifier, elementDataModel));
                 syncTask.Wait();
-                
+
+                var response = syncTask.Result;
+                var value = response.Value;
+
+                diagnostics.Add($"DID WE GET ANYTHING HERE: {value.ToString()}");
+
                 stopwatch.Stop();
                 diagnostics.Add($"✓ SyncExchangeDataAsync completed");
                 diagnostics.Add($"⏱️ SyncExchangeDataAsync: {stopwatch.ElapsedMilliseconds}ms ({stopwatch.Elapsed.TotalSeconds:F3}s)");
