@@ -6,6 +6,11 @@
     <Prefer32Bit>false</Prefer32Bit>
   </PropertyGroup>
 
+  <!-- Allow test project to access internal types -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="ExchangeNodes.Tests" />
+  </ItemGroup>
+
   <!-- Package Details -->
   <PropertyGroup>
     <RootNamespace>DataExchangeNodes</RootNamespace>
