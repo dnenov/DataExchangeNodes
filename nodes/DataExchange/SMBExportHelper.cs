@@ -613,9 +613,11 @@ END-ISO-10303-21;
 
             setBRepGeometryMethod.Invoke(exchangeData, new object[] { geometryAsset, dummyStepPath });
 
-            var mappingKey = $"{exchangeId}_{geometryAssetId}";
-            GeometryAssetIdToSmbPath[mappingKey] = smbFilePath;
-            GeometryAssetIdToGeometryCount[mappingKey] = geometryCount;
+            // Use just geometry asset ID as key (not exchange-prefixed) so ProcessAssetInfoForSMB can find it
+            GeometryAssetIdToSmbPath[geometryAssetId] = smbFilePath;
+            GeometryAssetIdToGeometryCount[geometryAssetId] = geometryCount;
+
+            log.Info($"[SMB Mapping] Stored: Key='{geometryAssetId}' -> SMB='{smbFilePath}' (exists: {File.Exists(smbFilePath)})");
 
             return dummyStepPath;
         }
@@ -1238,6 +1240,8 @@ END-ISO-10303-21;
             Dictionary<string, int> geometryAssetIdToGeometryCount,
             DiagnosticsLogger log)
         {
+            log.Info($"[GetAssetInfos] SMB mapping has {geometryAssetIdToSmbPath.Count} entries");
+
             var getBatchedAssetInfosMethod = ReflectionUtils.GetMethod(
                 clientType,
                 "GetBatchedAssetInfos",
@@ -1252,24 +1256,31 @@ END-ISO-10303-21;
             var batchedAssetInfos = getBatchedAssetInfosMethod.Invoke(client, new object[] { exchangeData }) as System.Collections.IEnumerable;
             if (batchedAssetInfos == null)
             {
+                log.Info("[GetAssetInfos] GetBatchedAssetInfos returned null");
                 return Enumerable.Empty<object>();
             }
 
             var allAssetInfos = new List<object>();
+            int batchCount = 0;
 
             foreach (var assetInfosBatch in batchedAssetInfos)
             {
+                batchCount++;
                 var assetInfosList = assetInfosBatch as System.Collections.IEnumerable;
                 if (assetInfosList != null)
                 {
+                    int itemCount = 0;
                     foreach (var assetInfo in assetInfosList)
                     {
+                        itemCount++;
                         ProcessAssetInfoForSMB(assetInfo, geometryAssetIdToSmbPath, geometryAssetIdToGeometryCount, log);
                         allAssetInfos.Add(assetInfo);
                     }
+                    log.Info($"[GetAssetInfos] Batch {batchCount}: {itemCount} asset infos");
                 }
             }
 
+            log.Info($"[GetAssetInfos] Total: {allAssetInfos.Count} asset infos from {batchCount} batches");
             return allAssetInfos;
         }
 
@@ -1279,20 +1290,41 @@ END-ISO-10303-21;
             var outputPathProp = assetInfo.GetType().GetProperty("OutputPath", BindingFlags.Public | BindingFlags.Instance);
             var idProp = assetInfo.GetType().GetProperty("Id", BindingFlags.Public | BindingFlags.Instance);
 
-            if (pathProp == null || outputPathProp == null || idProp == null) return;
+            if (pathProp == null || outputPathProp == null || idProp == null)
+            {
+                log.Info($"[ProcessAssetInfo] Missing property: Path={pathProp != null}, OutputPath={outputPathProp != null}, Id={idProp != null}");
+                return;
+            }
 
             var path = pathProp.GetValue(assetInfo)?.ToString();
             var assetInfoId = idProp.GetValue(assetInfo)?.ToString();
 
-            if (string.IsNullOrEmpty(path) || string.IsNullOrEmpty(assetInfoId)) return;
-            if (!File.Exists(path)) return;
+            log.Info($"[ProcessAssetInfo] AssetInfo ID='{assetInfoId}', Path='{path}'");
+            log.Info($"[ProcessAssetInfo] Available mapping keys: [{string.Join(", ", geometryAssetIdToSmbPath.Keys)}]");
+
+            if (string.IsNullOrEmpty(path) || string.IsNullOrEmpty(assetInfoId))
+            {
+                log.Info($"[ProcessAssetInfo] Skipping - empty path or ID");
+                return;
+            }
+            if (!File.Exists(path))
+            {
+                log.Info($"[ProcessAssetInfo] Skipping - path file doesn't exist: {path}");
+                return;
+            }
 
             if (geometryAssetIdToSmbPath.TryGetValue(assetInfoId, out var realSmbPath))
             {
+                log.Info($"[ProcessAssetInfo] FOUND mapping: '{assetInfoId}' -> '{realSmbPath}' (exists: {File.Exists(realSmbPath)})");
                 if (File.Exists(realSmbPath))
                 {
                     outputPathProp.SetValue(assetInfo, realSmbPath);
+                    log.Info($"[ProcessAssetInfo] Set OutputPath to SMB file");
                 }
+            }
+            else
+            {
+                log.Info($"[ProcessAssetInfo] NO mapping found for key '{assetInfoId}'");
             }
 
             SetupBodyInfoList(assetInfo, assetInfoId, geometryAssetIdToGeometryCount);
@@ -1387,8 +1419,114 @@ END-ISO-10303-21;
 
         private static async Task UploadGeometriesAsync(object client, Type clientType, DataExchangeIdentifier identifier, string fulfillmentId, List<object> assetInfosList, object exchangeData, Type exchangeDataType, DiagnosticsLogger log)
         {
-            // Implementation - calls UploadGeometries method via reflection
-            await Task.CompletedTask;
+            if (assetInfosList == null || assetInfosList.Count == 0)
+            {
+                log.Info("No geometries to upload");
+                return;
+            }
+
+            // Find the UploadGeometries method on Client (internal method)
+            var uploadGeometriesMethod = clientType.GetMethod("UploadGeometries",
+                BindingFlags.NonPublic | BindingFlags.Instance);
+
+            if (uploadGeometriesMethod == null)
+            {
+                // Try alternative method names
+                uploadGeometriesMethod = clientType.GetMethod("UploadGeometriesAsync",
+                    BindingFlags.NonPublic | BindingFlags.Instance);
+            }
+
+            if (uploadGeometriesMethod == null)
+            {
+                log.Error("Could not find UploadGeometries method on Client - geometry upload will be skipped");
+                return;
+            }
+
+            // Log method signature
+            var parameters = uploadGeometriesMethod.GetParameters();
+            log.Info($"[UploadGeometries] Found method with {parameters.Length} parameters:");
+            for (int i = 0; i < parameters.Length; i++)
+            {
+                log.Info($"  [{i}] {parameters[i].Name}: {parameters[i].ParameterType.Name}");
+            }
+
+            try
+            {
+                // Get the AssetInfo list type for proper method invocation
+                var assetInfoType = assetInfosList[0].GetType();
+                var listType = typeof(List<>).MakeGenericType(assetInfoType);
+                var typedList = Activator.CreateInstance(listType);
+                var addMethod = listType.GetMethod("Add");
+                foreach (var item in assetInfosList)
+                {
+                    addMethod.Invoke(typedList, new[] { item });
+                }
+
+                // Log what we're passing
+                log.Info($"[UploadGeometries] Calling with: identifier={identifier.ExchangeId}, fulfillmentId={fulfillmentId}, assetInfos count={assetInfosList.Count}");
+
+                // Verify OutputPath is set on each AssetInfo
+                foreach (var ai in assetInfosList)
+                {
+                    var outPathProp = ai.GetType().GetProperty("OutputPath", BindingFlags.Public | BindingFlags.Instance);
+                    var pathProp = ai.GetType().GetProperty("Path", BindingFlags.Public | BindingFlags.Instance);
+                    var outPath = outPathProp?.GetValue(ai)?.ToString();
+                    var path = pathProp?.GetValue(ai)?.ToString();
+                    log.Info($"[UploadGeometries] AssetInfo - Path='{path}', OutputPath='{outPath}', OutputPath exists={!string.IsNullOrEmpty(outPath) && File.Exists(outPath)}");
+                }
+
+                // Invoke UploadGeometries
+                object result;
+
+                if (parameters.Length == 5)
+                {
+                    // UploadGeometries(identifier, fulfillmentId, assetInfos, exchangeData, cancellationToken)
+                    result = uploadGeometriesMethod.Invoke(client, new object[] { identifier, fulfillmentId, typedList, exchangeData, CancellationToken.None });
+                }
+                else if (parameters.Length == 4)
+                {
+                    // UploadGeometries(identifier, fulfillmentId, assetInfos, exchangeData)
+                    result = uploadGeometriesMethod.Invoke(client, new object[] { identifier, fulfillmentId, typedList, exchangeData });
+                }
+                else if (parameters.Length == 3)
+                {
+                    // UploadGeometries(identifier, fulfillmentId, assetInfos)
+                    result = uploadGeometriesMethod.Invoke(client, new object[] { identifier, fulfillmentId, typedList });
+                }
+                else if (parameters.Length == 2)
+                {
+                    // UploadGeometries(fulfillmentId, assetInfos)
+                    result = uploadGeometriesMethod.Invoke(client, new object[] { fulfillmentId, typedList });
+                }
+                else
+                {
+                    log.Error($"UploadGeometries method has unexpected parameter count: {parameters.Length}");
+                    return;
+                }
+
+                log.Info($"[UploadGeometries] Method invoked, result type: {result?.GetType().Name ?? "null"}");
+
+                // Handle async result if needed
+                if (result is Task task)
+                {
+                    log.Info($"[UploadGeometries] Awaiting async task...");
+                    await task.ConfigureAwait(false);
+                    log.Info($"[UploadGeometries] Async task completed");
+                }
+
+                log.Info($"[UploadGeometries] Uploaded {assetInfosList.Count} geometry asset(s)");
+            }
+            catch (TargetInvocationException tie)
+            {
+                var innerEx = tie.InnerException ?? tie;
+                log.Error($"UploadGeometries failed: {innerEx.Message}");
+                throw innerEx;
+            }
+            catch (Exception ex)
+            {
+                log.Error($"UploadGeometries failed: {ex.Message}");
+                throw;
+            }
         }
 
         private static async Task UploadCustomGeometriesAsync(object client, Type clientType, DataExchangeIdentifier identifier, string fulfillmentId, object exchangeData, Type exchangeDataType, DiagnosticsLogger log)
@@ -1403,12 +1541,216 @@ END-ISO-10303-21;
 
         private static async Task<object> GetFulfillmentSyncRequestAsync(object client, Type clientType, DataExchangeIdentifier identifier, object exchangeData, Type exchangeDataType, DiagnosticsLogger log)
         {
-            return await Task.FromResult<object>(null);
+            log.Info("Getting FulfillmentSyncRequest...");
+
+            // Step 1: Get exchange details to get schema namespace
+            var getExchangeDetailsMethod = ReflectionUtils.GetMethod(
+                clientType,
+                "GetExchangeDetailsAsync",
+                BindingFlags.Public | BindingFlags.Instance,
+                new[] { typeof(DataExchangeIdentifier) });
+
+            if (getExchangeDetailsMethod == null)
+            {
+                log.Error("Could not find GetExchangeDetailsAsync method");
+                return null;
+            }
+
+            var exchangeDetailsTask = ReflectionUtils.InvokeMethod(client, getExchangeDetailsMethod, new object[] { identifier }, log);
+            if (exchangeDetailsTask == null)
+            {
+                log.Error("GetExchangeDetailsAsync returned null");
+                return null;
+            }
+
+            var exchangeDetails = await ((dynamic)exchangeDetailsTask).ConfigureAwait(false);
+            var exchangeDetailsType = exchangeDetails.GetType();
+            var valueProp = exchangeDetailsType.GetProperty("Value");
+            object exchangeDetailsValue = null;
+            if (valueProp != null)
+            {
+                exchangeDetailsValue = valueProp.GetValue(exchangeDetails);
+            }
+
+            // Step 2: Get FulfillmentSyncRequestHandler via GetService
+            var getServiceMethod = clientType.GetMethod("GetService", BindingFlags.Public | BindingFlags.Instance | BindingFlags.NonPublic);
+            if (getServiceMethod == null)
+            {
+                log.Error("Could not find GetService method");
+                return null;
+            }
+
+            var fulfillmentSyncRequestHandlerType = Type.GetType("Autodesk.DataExchange.ClientServices.FulfillmentSyncRequestHandler, Autodesk.DataExchange");
+            if (fulfillmentSyncRequestHandlerType == null)
+            {
+                log.Error("Could not find FulfillmentSyncRequestHandler type");
+                return null;
+            }
+
+            var getServiceGeneric = getServiceMethod.MakeGenericMethod(fulfillmentSyncRequestHandlerType);
+            var fulfillmentSyncRequestHandler = getServiceGeneric.Invoke(client, null);
+            if (fulfillmentSyncRequestHandler == null)
+            {
+                log.Error("GetService returned null for FulfillmentSyncRequestHandler");
+                return null;
+            }
+
+            // Step 3: Get schema namespace from exchangeDetails
+            string schemaNamespace = null;
+            if (exchangeDetailsValue != null)
+            {
+                var schemaNamespaceProp = exchangeDetailsValue.GetType().GetProperty("SchemaNamespace", BindingFlags.Public | BindingFlags.Instance);
+                if (schemaNamespaceProp != null)
+                {
+                    schemaNamespace = schemaNamespaceProp.GetValue(exchangeDetailsValue)?.ToString();
+                }
+            }
+
+            // Step 4: Call GetFulfillmentSyncRequest - find method with correct signature
+            var getFulfillmentSyncRequestMethod = ReflectionUtils.GetMethod(
+                fulfillmentSyncRequestHandlerType,
+                "GetFulfillmentSyncRequest",
+                BindingFlags.Public | BindingFlags.Instance,
+                new[] { typeof(string), exchangeDataType, typeof(CancellationToken) });
+
+            if (getFulfillmentSyncRequestMethod == null)
+            {
+                // Try without CancellationToken
+                getFulfillmentSyncRequestMethod = ReflectionUtils.GetMethod(
+                    fulfillmentSyncRequestHandlerType,
+                    "GetFulfillmentSyncRequest",
+                    BindingFlags.Public | BindingFlags.Instance,
+                    new[] { typeof(string), exchangeDataType });
+            }
+
+            if (getFulfillmentSyncRequestMethod == null)
+            {
+                log.Error("Could not find GetFulfillmentSyncRequest method with expected signature");
+                return null;
+            }
+
+            // Check actual parameter count and call accordingly
+            var methodParams = getFulfillmentSyncRequestMethod.GetParameters();
+            object[] invokeParams;
+            if (methodParams.Length == 3)
+            {
+                invokeParams = new object[] { schemaNamespace, exchangeData, CancellationToken.None };
+            }
+            else if (methodParams.Length == 2)
+            {
+                invokeParams = new object[] { schemaNamespace, exchangeData };
+            }
+            else
+            {
+                log.Error($"GetFulfillmentSyncRequest has unexpected parameter count: {methodParams.Length}");
+                return null;
+            }
+
+            var fulfillmentSyncRequestTask = ReflectionUtils.InvokeMethod(fulfillmentSyncRequestHandler, getFulfillmentSyncRequestMethod, invokeParams, log);
+            if (fulfillmentSyncRequestTask == null)
+            {
+                log.Error("GetFulfillmentSyncRequest returned null");
+                return null;
+            }
+
+            var fulfillmentSyncRequest = await ((dynamic)fulfillmentSyncRequestTask).ConfigureAwait(false);
+            log.Info("Got FulfillmentSyncRequest");
+            return fulfillmentSyncRequest;
         }
 
         private static async Task<List<Task>> BatchAndSendSyncRequestsAsync(object client, Type clientType, DataExchangeIdentifier identifier, string fulfillmentId, object fulfillmentSyncRequest, object exchangeData, Type exchangeDataType, DiagnosticsLogger log)
         {
-            return await Task.FromResult(new List<Task>());
+            log.Info("Batching and sending sync requests...");
+            var fulfillmentTasks = new List<Task>();
+
+            if (fulfillmentSyncRequest == null)
+            {
+                log.Info("No fulfillment sync request to process");
+                return fulfillmentTasks;
+            }
+
+            try
+            {
+                var fulfillmentSyncRequestType = fulfillmentSyncRequest.GetType();
+
+                // Get batched requests using GetBatchedFulfillmentSyncRequests
+                var getBatchedFulfillmentSyncRequestsMethod = ReflectionUtils.GetMethod(
+                    clientType,
+                    "GetBatchedFulfillmentSyncRequests",
+                    BindingFlags.NonPublic | BindingFlags.Instance,
+                    new Type[] { fulfillmentSyncRequestType });
+
+                if (getBatchedFulfillmentSyncRequestsMethod == null)
+                {
+                    log.Error("Could not find GetBatchedFulfillmentSyncRequests method");
+                    return fulfillmentTasks;
+                }
+
+                var batchedRequests = getBatchedFulfillmentSyncRequestsMethod.Invoke(client, new object[] { fulfillmentSyncRequest }) as System.Collections.IEnumerable;
+                if (batchedRequests == null)
+                {
+                    log.Error("GetBatchedFulfillmentSyncRequests returned null");
+                    return fulfillmentTasks;
+                }
+
+                // Get MakeSyncRequestWithRetries method
+                var makeSyncRequestMethod = ReflectionUtils.GetMethod(
+                    clientType,
+                    "MakeSyncRequestWithRetries",
+                    BindingFlags.NonPublic | BindingFlags.Instance,
+                    new Type[] { typeof(DataExchangeIdentifier), typeof(string), fulfillmentSyncRequestType, typeof(CancellationToken) });
+
+                if (makeSyncRequestMethod == null)
+                {
+                    log.Error("Could not find MakeSyncRequestWithRetries method");
+                    return fulfillmentTasks;
+                }
+
+                // Send each batched request
+                foreach (var individualRequest in batchedRequests)
+                {
+                    var syncTask = ReflectionUtils.InvokeMethod(client, makeSyncRequestMethod, new object[] { identifier, fulfillmentId, individualRequest, CancellationToken.None }, log);
+                    if (syncTask != null && syncTask is Task task)
+                    {
+                        fulfillmentTasks.Add(task);
+                    }
+                }
+
+                // Add ProcessGeometry task
+                log.Info("Processing geometry...");
+                var processGeometryMethod = ReflectionUtils.GetMethod(
+                    clientType,
+                    "ProcessGeometry",
+                    BindingFlags.NonPublic | BindingFlags.Instance,
+                    new[] { exchangeDataType, typeof(DataExchangeIdentifier), typeof(string), typeof(CancellationToken) });
+
+                if (processGeometryMethod != null)
+                {
+                    var processGeometryTask = ReflectionUtils.InvokeMethod(client, processGeometryMethod, new object[] { exchangeData, identifier, fulfillmentId, CancellationToken.None }, log);
+                    if (processGeometryTask != null && processGeometryTask is Task pgTask)
+                    {
+                        fulfillmentTasks.Add(pgTask);
+                        log.Info("Added ProcessGeometry task");
+                    }
+                }
+                else
+                {
+                    log.Info("ProcessGeometry not found, skipping");
+                }
+
+                log.Info($"Created {fulfillmentTasks.Count} sync request task(s)");
+            }
+            catch (TargetInvocationException tie)
+            {
+                var innerEx = tie.InnerException ?? tie;
+                log.Error($"BatchAndSendSyncRequests failed: {innerEx.Message}");
+            }
+            catch (Exception ex)
+            {
+                log.Error($"BatchAndSendSyncRequests failed: {ex.Message}");
+            }
+
+            return fulfillmentTasks;
         }
 
         private static async Task WaitForAllTasksAsync(List<Task> tasks, DiagnosticsLogger log)
@@ -1439,19 +1781,246 @@ END-ISO-10303-21;
 
         private static async Task PollForFulfillmentAsync(object client, Type clientType, DataExchangeIdentifier identifier, string fulfillmentId, DiagnosticsLogger log)
         {
-            // Implementation placeholder - poll until fulfillment completes
-            await Task.CompletedTask;
+            if (string.IsNullOrEmpty(fulfillmentId))
+            {
+                log.Info("No fulfillment ID to poll");
+                return;
+            }
+
+            try
+            {
+                // Try to find PollForFulfillment method
+                var pollMethod = clientType.GetMethod("PollForFulfillment",
+                    BindingFlags.NonPublic | BindingFlags.Instance);
+
+                if (pollMethod == null)
+                {
+                    pollMethod = clientType.GetMethod("PollForFulfillmentAsync",
+                        BindingFlags.NonPublic | BindingFlags.Instance);
+                }
+
+                if (pollMethod == null)
+                {
+                    // Try public methods
+                    pollMethod = clientType.GetMethod("WaitForFulfillmentAsync",
+                        BindingFlags.Public | BindingFlags.Instance);
+                }
+
+                if (pollMethod != null)
+                {
+                    var parameters = pollMethod.GetParameters();
+                    object result;
+
+                    if (parameters.Length == 3)
+                    {
+                        result = pollMethod.Invoke(client, new object[] { identifier, fulfillmentId, CancellationToken.None });
+                    }
+                    else if (parameters.Length == 2)
+                    {
+                        result = pollMethod.Invoke(client, new object[] { identifier, fulfillmentId });
+                    }
+                    else if (parameters.Length == 1)
+                    {
+                        result = pollMethod.Invoke(client, new object[] { fulfillmentId });
+                    }
+                    else
+                    {
+                        log.Info($"PollForFulfillment has unexpected parameter count: {parameters.Length}");
+                        return;
+                    }
+
+                    // Handle async result
+                    if (result is Task task)
+                    {
+                        await task.ConfigureAwait(false);
+                    }
+
+                    log.Info("Fulfillment polling completed");
+                }
+                else
+                {
+                    // Fallback: use API polling directly
+                    var api = GetAPI(client, clientType);
+                    if (api != null)
+                    {
+                        var apiType = api.GetType();
+                        var getFulfillmentMethod = ReflectionUtils.GetMethod(apiType, "GetFulfillmentAsync",
+                            BindingFlags.Public | BindingFlags.Instance,
+                            new[] { typeof(string), typeof(string), typeof(string), typeof(CancellationToken) });
+
+                        if (getFulfillmentMethod != null)
+                        {
+                            // Poll with timeout
+                            var maxAttempts = 60; // 60 attempts x 2 seconds = 2 minutes max
+                            var delayMs = 2000;
+
+                            for (int attempt = 0; attempt < maxAttempts; attempt++)
+                            {
+                                var fulfillmentResponse = await ((dynamic)getFulfillmentMethod.Invoke(api,
+                                    new object[] { identifier.CollectionId, identifier.ExchangeId, fulfillmentId, CancellationToken.None }));
+
+                                if (fulfillmentResponse != null)
+                                {
+                                    var statusProp = fulfillmentResponse.GetType().GetProperty("Status");
+                                    if (statusProp != null)
+                                    {
+                                        var status = statusProp.GetValue(fulfillmentResponse)?.ToString();
+                                        if (status == "COMPLETED" || status == "SUCCESS" || status == "Completed")
+                                        {
+                                            log.Info("Fulfillment completed successfully");
+                                            return;
+                                        }
+                                        if (status == "FAILED" || status == "ERROR" || status == "Failed")
+                                        {
+                                            log.Error("Fulfillment failed");
+                                            return;
+                                        }
+                                    }
+                                }
+
+                                await Task.Delay(delayMs);
+                            }
+
+                            log.Info("Fulfillment polling timed out - continuing anyway");
+                        }
+                    }
+                    else
+                    {
+                        log.Info("PollForFulfillment method not found - skipping polling");
+                    }
+                }
+            }
+            catch (TargetInvocationException tie)
+            {
+                var innerEx = tie.InnerException ?? tie;
+                log.Error($"PollForFulfillment failed: {innerEx.Message}");
+            }
+            catch (Exception ex)
+            {
+                log.Error($"PollForFulfillment failed: {ex.Message}");
+            }
         }
 
         private static async Task GenerateViewableAsync(object client, Type clientType, DataExchangeIdentifier identifier, DiagnosticsLogger log)
         {
-            // Implementation placeholder - generate viewable (optional, slow)
-            await Task.CompletedTask;
+            log.Info("Generating viewable from exchange geometry...");
+            try
+            {
+                var generateViewableMethod = ReflectionUtils.GetMethod(
+                    clientType,
+                    "GenerateViewableAsync",
+                    BindingFlags.Public | BindingFlags.Instance,
+                    new[] { typeof(string), typeof(string) });
+
+                if (generateViewableMethod != null)
+                {
+                    log.Info($"Calling GenerateViewableAsync with ExchangeId: {identifier.ExchangeId}, CollectionId: {identifier.CollectionId}");
+
+                    var generateTask = ReflectionUtils.InvokeMethod(client, generateViewableMethod, new object[] { identifier.ExchangeId, identifier.CollectionId }, log);
+                    if (generateTask != null)
+                    {
+                        var response = await ((dynamic)generateTask).ConfigureAwait(false);
+
+                        // Inspect the response (should be IResponse<bool>)
+                        if (response != null)
+                        {
+                            var responseType = response.GetType();
+
+                            // Check for IsSuccess property
+                            var isSuccessProp = responseType.GetProperty("IsSuccess") ?? responseType.GetProperty("Success");
+                            if (isSuccessProp != null)
+                            {
+                                var isSuccess = (bool)isSuccessProp.GetValue(response);
+                                if (isSuccess)
+                                {
+                                    log.Info("Viewable generation request submitted successfully");
+                                    log.Info("Note: Viewable processing is asynchronous and may take 10-30 seconds");
+                                }
+                                else
+                                {
+                                    var errorProp = responseType.GetProperty("Error");
+                                    if (errorProp != null)
+                                    {
+                                        var error = errorProp.GetValue(response);
+                                        log.Info($"Viewable generation failed: {error}");
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                else
+                {
+                    log.Info("GenerateViewableAsync method not found, geometry may not appear in viewer");
+                }
+            }
+            catch (Exception ex)
+            {
+                log.Info($"Exception during viewable generation: {ex.Message}");
+                // Don't throw - viewable generation failure shouldn't break the upload
+            }
         }
 
         private static void ClearLocalStatesAndSetRevision(object client, Type clientType, object exchangeData, Type exchangeDataType, DiagnosticsLogger log)
         {
-            // Implementation placeholder - clear local states
+            log.Info("Clearing local states and setting revision...");
+
+            try
+            {
+                // Get fulfillmentStatus to get revision ID
+                var fulfillmentStatusField = clientType.GetField("fulfillmentStatus", BindingFlags.NonPublic | BindingFlags.Instance);
+                string revisionId = null;
+                if (fulfillmentStatusField != null)
+                {
+                    var fulfillmentStatus = fulfillmentStatusField.GetValue(client);
+                    if (fulfillmentStatus != null)
+                    {
+                        var revisionIdProp = fulfillmentStatus.GetType().GetProperty("RevisionId", BindingFlags.Public | BindingFlags.Instance);
+                        if (revisionIdProp != null)
+                        {
+                            revisionId = revisionIdProp.GetValue(fulfillmentStatus)?.ToString();
+                        }
+                    }
+                }
+
+                if (!string.IsNullOrEmpty(revisionId))
+                {
+                    // ClearLocalStates on exchangeData with revisionId
+                    var clearLocalStatesMethod = exchangeDataType.GetMethod("ClearLocalStates", BindingFlags.Public | BindingFlags.Instance);
+                    if (clearLocalStatesMethod != null)
+                    {
+                        clearLocalStatesMethod.Invoke(exchangeData, new object[] { revisionId });
+                        log.Info($"Cleared local states with revision: {revisionId}");
+                    }
+
+                    // SetRevision on RootAsset
+                    var rootAssetProp = exchangeDataType.GetProperty("RootAsset", BindingFlags.Public | BindingFlags.Instance);
+                    if (rootAssetProp != null)
+                    {
+                        var rootAsset = rootAssetProp.GetValue(exchangeData);
+                        if (rootAsset != null)
+                        {
+                            var setRevisionMethod = rootAsset.GetType().GetMethod("SetRevision", BindingFlags.Public | BindingFlags.Instance);
+                            if (setRevisionMethod != null)
+                            {
+                                setRevisionMethod.Invoke(rootAsset, new object[] { revisionId });
+                                log.Info($"Set revision on RootAsset: {revisionId}");
+                            }
+                        }
+                    }
+                }
+                else
+                {
+                    log.Info("Could not get revision ID, skipping ClearLocalStates and SetRevision");
+                }
+
+                // Clear our static mappings
+                ClearMappings();
+            }
+            catch (Exception ex)
+            {
+                log.Error($"ClearLocalStatesAndSetRevision failed: {ex.Message}");
+            }
         }
 
         private static async Task DiscardFulfillmentAsync(object client, Type clientType, DataExchangeIdentifier identifier, string fulfillmentId, DiagnosticsLogger log)

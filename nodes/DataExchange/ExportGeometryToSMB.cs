@@ -30,7 +30,7 @@ namespace DataExchangeNodes.DataExchange
             string outputFilePath = null,
             string unit = "kUnitType_CentiMeter")
         {
-            var log = new DiagnosticsLogger(DiagnosticLevel.Error);
+            var log = new DiagnosticsLogger(DiagnosticLevel.Info);
             bool success = false;
             string finalSmbFilePath = null;
 
@@ -149,6 +149,11 @@ namespace DataExchangeNodes.DataExchange
                         }
 
                         success = true;
+
+                        // Report success stats
+                        var fileInfo = new FileInfo(finalSmbFilePath);
+                        var fileSizeKB = fileInfo.Length / 1024.0;
+                        log.Info($"Exported {geometries.Count} geometries to SMB ({fileSizeKB:F1} KB)");
                     }
                 }
             }
@@ -184,7 +189,7 @@ namespace DataExchangeNodes.DataExchange
             string unit = "kUnitType_CentiMeter",
             string replaceMode = "replaceByName")
         {
-            var log = new DiagnosticsLogger(DiagnosticLevel.Error);
+            var log = new DiagnosticsLogger(DiagnosticLevel.Info);
             bool success = false;
             string finalElementId = string.IsNullOrEmpty(elementId) ? Guid.NewGuid().ToString() : elementId;
 
@@ -339,7 +344,16 @@ namespace DataExchangeNodes.DataExchange
                     var syncTask = SMBExportHelper.SyncExchangeDataForSMBAsync(client, clientType, identifier, exchangeData, exchangeDataType, log);
                     syncTask.GetAwaiter().GetResult();
                     success = true;
-                    log.Info($"SMB upload completed successfully to exchange '{exchange.ExchangeTitle}'");
+
+                    // Report success stats
+                    var smbFileInfo = new FileInfo(smbFilePath);
+                    var fileSizeKB = smbFileInfo.Length / 1024.0;
+                    var statsLines = new List<string>
+                    {
+                        $"Upload complete: '{elementName}' to '{exchange.ExchangeTitle}'",
+                        $"Geometries: {geometryCount} | Mode: {replaceMode} | SMB Size: {fileSizeKB:F1} KB"
+                    };
+                    log.Info(string.Join("\n", statsLines));
                 }
                 catch (Exception ex)
                 {
