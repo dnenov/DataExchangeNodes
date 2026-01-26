@@ -149,5 +149,189 @@ namespace DataExchangeNodes.DataExchange
                 .WithProperty("smbFilePaths", smbFilePaths)
                 .Build();
         }
+
+        /// <summary>
+        /// Loads geometry from a DataExchange, filtering by element IDs.
+        /// Only downloads and loads geometry for the specified element IDs.
+        /// Use GetExchangeStructure node to get the IDs of available elements.
+        /// </summary>
+        /// <param name="exchange">Exchange object from SelectExchange node</param>
+        /// <param name="elementIds">List of element IDs to load (from GetExchangeStructure)</param>
+        /// <param name="unit">Unit type for geometry (default: "kUnitType_CentiMeter")</param>
+        /// <param name="downloadDirectory">Optional directory for downloaded files</param>
+        /// <returns>Dictionary with "geometries", "loadedIds", "log", and "success"</returns>
+        [MultiReturn(new[] { "geometries", "loadedIds", "log", "success" })]
+        public static Dictionary<string, object> LoadByIds(
+            Exchange exchange,
+            List<string> elementIds,
+            string unit = "kUnitType_CentiMeter",
+            [DefaultArgument("")] string downloadDirectory = "")
+        {
+            var geometries = new List<Geometry>();
+            var loadedIds = new List<string>();
+            var log = new DiagnosticsLogger(DiagnosticLevel.Error);
+            bool success = false;
+
+            try
+            {
+                // Validate inputs
+                if (exchange == null)
+                    throw new ArgumentNullException(nameof(exchange), "Exchange cannot be null");
+
+                if (elementIds == null || elementIds.Count == 0)
+                    throw new ArgumentException("Element IDs list cannot be null or empty", nameof(elementIds));
+
+                if (_getTokenFunc == null)
+                    throw new InvalidOperationException("Authentication not configured. Please use SelectExchange node first to log in.");
+
+                var accessToken = _getTokenFunc();
+                if (string.IsNullOrEmpty(accessToken))
+                    throw new InvalidOperationException("Not logged in. Please log in to Dynamo first.");
+
+                // Create ID set for fast lookup
+                var idSet = new HashSet<string>(elementIds, StringComparer.OrdinalIgnoreCase);
+                log.Info($"Filtering download to {idSet.Count} element ID(s)");
+
+                // Download SMB files with ID filter
+                var resolvedDownloadDir = SMBLoaderHelper.ResolveDownloadDirectory(downloadDirectory);
+                var smbFilePaths = SMBLoaderHelper.DownloadSelectedSMBFilesAsync(
+                    exchange, resolvedDownloadDir, idSet, null, log)
+                    .GetAwaiter().GetResult();
+
+                // Load geometry from downloaded files
+                foreach (var smbFilePath in smbFilePaths)
+                {
+                    if (!string.IsNullOrEmpty(smbFilePath) && File.Exists(smbFilePath))
+                    {
+                        try
+                        {
+                            var geometriesFromFile = SMBLoaderHelper.LoadGeometryFromSMB(smbFilePath, unit, log);
+                            geometries.AddRange(geometriesFromFile);
+
+                            // Extract ID from filename if available
+                            var fileName = Path.GetFileNameWithoutExtension(smbFilePath);
+                            if (!string.IsNullOrEmpty(fileName))
+                            {
+                                loadedIds.Add(fileName);
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            log.Error($"Failed to load {Path.GetFileName(smbFilePath)}: {ex.Message}");
+                        }
+                    }
+                }
+
+                success = geometries.Count > 0;
+                if (success)
+                {
+                    log.Info($"Loaded {geometries.Count} geometry object(s) from {loadedIds.Count} element(s)");
+                }
+            }
+            catch (Exception ex)
+            {
+                log.Error($"{ex.GetType().Name}: {ex.Message}");
+            }
+
+            return new Dictionary<string, object>
+            {
+                { "geometries", geometries },
+                { "loadedIds", loadedIds },
+                { "log", log.GetLog() },
+                { "success", success }
+            };
+        }
+
+        /// <summary>
+        /// Loads geometry from a DataExchange, filtering by element names.
+        /// Only downloads and loads geometry for elements matching the specified names.
+        /// Use GetExchangeStructure node to get the names of available elements.
+        /// </summary>
+        /// <param name="exchange">Exchange object from SelectExchange node</param>
+        /// <param name="elementNames">List of element names to load</param>
+        /// <param name="unit">Unit type for geometry (default: "kUnitType_CentiMeter")</param>
+        /// <param name="downloadDirectory">Optional directory for downloaded files</param>
+        /// <returns>Dictionary with "geometries", "loadedNames", "log", and "success"</returns>
+        [MultiReturn(new[] { "geometries", "loadedNames", "log", "success" })]
+        public static Dictionary<string, object> LoadByNames(
+            Exchange exchange,
+            List<string> elementNames,
+            string unit = "kUnitType_CentiMeter",
+            [DefaultArgument("")] string downloadDirectory = "")
+        {
+            var geometries = new List<Geometry>();
+            var loadedNames = new List<string>();
+            var log = new DiagnosticsLogger(DiagnosticLevel.Error);
+            bool success = false;
+
+            try
+            {
+                // Validate inputs
+                if (exchange == null)
+                    throw new ArgumentNullException(nameof(exchange), "Exchange cannot be null");
+
+                if (elementNames == null || elementNames.Count == 0)
+                    throw new ArgumentException("Element names list cannot be null or empty", nameof(elementNames));
+
+                if (_getTokenFunc == null)
+                    throw new InvalidOperationException("Authentication not configured. Please use SelectExchange node first to log in.");
+
+                var accessToken = _getTokenFunc();
+                if (string.IsNullOrEmpty(accessToken))
+                    throw new InvalidOperationException("Not logged in. Please log in to Dynamo first.");
+
+                // Create name set for fast lookup (case-insensitive)
+                var nameSet = new HashSet<string>(elementNames, StringComparer.OrdinalIgnoreCase);
+                log.Info($"Filtering download to {nameSet.Count} element name(s)");
+
+                // Download SMB files with name filter
+                var resolvedDownloadDir = SMBLoaderHelper.ResolveDownloadDirectory(downloadDirectory);
+                var smbFilePaths = SMBLoaderHelper.DownloadSelectedSMBFilesAsync(
+                    exchange, resolvedDownloadDir, null, nameSet, log)
+                    .GetAwaiter().GetResult();
+
+                // Load geometry from downloaded files
+                foreach (var smbFilePath in smbFilePaths)
+                {
+                    if (!string.IsNullOrEmpty(smbFilePath) && File.Exists(smbFilePath))
+                    {
+                        try
+                        {
+                            var geometriesFromFile = SMBLoaderHelper.LoadGeometryFromSMB(smbFilePath, unit, log);
+                            geometries.AddRange(geometriesFromFile);
+
+                            // Extract name from filename if available
+                            var fileName = Path.GetFileNameWithoutExtension(smbFilePath);
+                            if (!string.IsNullOrEmpty(fileName))
+                            {
+                                loadedNames.Add(fileName);
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            log.Error($"Failed to load {Path.GetFileName(smbFilePath)}: {ex.Message}");
+                        }
+                    }
+                }
+
+                success = geometries.Count > 0;
+                if (success)
+                {
+                    log.Info($"Loaded {geometries.Count} geometry object(s) from {loadedNames.Count} element(s)");
+                }
+            }
+            catch (Exception ex)
+            {
+                log.Error($"{ex.GetType().Name}: {ex.Message}");
+            }
+
+            return new Dictionary<string, object>
+            {
+                { "geometries", geometries },
+                { "loadedNames", loadedNames },
+                { "log", log.GetLog() },
+                { "success", success }
+            };
+        }
     }
 }

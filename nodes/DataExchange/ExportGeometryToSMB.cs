@@ -173,6 +173,7 @@ namespace DataExchangeNodes.DataExchange
         /// <param name="elementName">Name for the new element (default: "ExportedGeometry")</param>
         /// <param name="elementId">Unique ID for the element. Leave empty to auto-generate a GUID.</param>
         /// <param name="unit">Unit type for geometry (default: "kUnitType_CentiMeter")</param>
+        /// <param name="replaceMode">How to handle existing elements: "replaceByName" (default - replaces elements with same name), "replaceAll" (clears all existing elements), "append" (adds without replacing)</param>
         /// <returns>Dictionary with "elementId" (ID of created element), "log" (diagnostic messages), and "success" (boolean)</returns>
         [MultiReturn(new[] { "elementId", "log", "success" })]
         public static Dictionary<string, object> UploadSMBToExchange(
@@ -180,7 +181,8 @@ namespace DataExchangeNodes.DataExchange
             string smbFilePath,
             string elementName = "ExportedGeometry",
             string elementId = "",
-            string unit = "kUnitType_CentiMeter")
+            string unit = "kUnitType_CentiMeter",
+            string replaceMode = "replaceByName")
         {
             var log = new DiagnosticsLogger(DiagnosticLevel.Error);
             bool success = false;
@@ -201,8 +203,19 @@ namespace DataExchangeNodes.DataExchange
                 var clientType = client.GetType();
                 var identifier = DataExchangeUtils.CreateIdentifier(exchange);
 
-                // Get ElementDataModel
-                var elementDataModel = SMBExportHelper.GetElementDataModel(identifier, log);
+                // Validate replaceMode
+                var validModes = new[] { "append", "replaceAll", "replaceByName" };
+                if (!validModes.Contains(replaceMode, StringComparer.OrdinalIgnoreCase))
+                {
+                    log.Error($"Invalid replaceMode '{replaceMode}'. Valid options: append, replaceAll, replaceByName");
+                    replaceMode = "replaceByName"; // Default to safe option
+                }
+
+                // Build list of element names to replace (for replaceByName mode)
+                var elementNamesToReplace = new List<string> { elementName };
+
+                // Get ElementDataModel with replacement handling
+                var elementDataModel = SMBExportHelper.GetElementDataModel(identifier, log, replaceMode, elementNamesToReplace);
 
                 // Create Element
                 var element = SMBExportHelper.CreateElement(elementDataModel, finalElementId, elementName, log);
@@ -356,6 +369,21 @@ namespace DataExchangeNodes.DataExchange
         public static List<string> GetDataExchangeUnits()
         {
             return DataExchangeUtils.GetAvailableUnits();
+        }
+
+        /// <summary>
+        /// Gets available replace mode options for geometry upload.
+        /// Use this node to populate a dropdown for replace mode selection.
+        /// </summary>
+        /// <returns>List of replace mode strings: replaceByName, replaceAll, append</returns>
+        public static List<string> GetReplaceModes()
+        {
+            return new List<string>
+            {
+                "replaceByName",  // Default - replaces elements with same name
+                "replaceAll",     // Clears all existing elements
+                "append"          // Adds without replacing (original behavior)
+            };
         }
     }
 }

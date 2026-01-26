@@ -131,15 +131,38 @@ namespace DataExchangeNodes.DataExchange
         }
 
         /// <summary>
-        /// Gets ElementDataModel from exchange, creating new one if needed
+        /// Gets ElementDataModel from exchange, creating new one if needed.
         /// </summary>
-        internal static ElementDataModel GetElementDataModel(DataExchangeIdentifier identifier, DiagnosticsLogger log)
+        /// <param name="identifier">The exchange identifier</param>
+        /// <param name="log">Diagnostics logger</param>
+        /// <param name="replaceMode">Replace mode: "append" (default), "replaceAll", or "replaceByName"</param>
+        /// <param name="elementNamesToReplace">Element names to replace (only used for "replaceByName" mode)</param>
+        internal static ElementDataModel GetElementDataModel(
+            DataExchangeIdentifier identifier,
+            DiagnosticsLogger log,
+            string replaceMode = "append",
+            List<string> elementNamesToReplace = null)
         {
             if (!DataExchangeClient.IsInitialized())
             {
                 throw new InvalidOperationException("Client is not initialized. Make sure you have selected an Exchange first using the SelectExchangeElements node.");
             }
 
+            var client = DataExchangeClient.GetClient();
+            if (client == null)
+            {
+                throw new InvalidOperationException("Cannot get ElementDataModel: Client is not initialized");
+            }
+
+            // For "replaceAll" mode, always create a fresh ElementDataModel (Grasshopper approach)
+            if (replaceMode == "replaceAll")
+            {
+                log.Info("Replace mode: replaceAll - creating fresh ElementDataModel");
+                var freshModel = ElementDataModel.Create(client);
+                return freshModel;
+            }
+
+            // Load existing ElementDataModel
             var response = DataExchangeClient.GetElementDataModelWithErrorInfoAsync(identifier, CancellationToken.None).GetAwaiter().GetResult();
 
             if (!response.isSuccess)
@@ -151,12 +174,6 @@ namespace DataExchangeNodes.DataExchange
 
             if (response.model == null)
             {
-                var client = DataExchangeClient.GetClient();
-                if (client == null)
-                {
-                    throw new InvalidOperationException("Cannot create ElementDataModel: Client is not initialized");
-                }
-
                 var newElementDataModel = ElementDataModel.Create(client);
 
                 // Sync empty ElementDataModel to initialize exchange structure
@@ -172,7 +189,96 @@ namespace DataExchangeNodes.DataExchange
                 return newElementDataModel;
             }
 
+            // For "replaceByName" mode, delete elements with matching names
+            if (replaceMode == "replaceByName" && elementNamesToReplace != null && elementNamesToReplace.Count > 0)
+            {
+                DeleteElementsByName(response.model, elementNamesToReplace, log);
+            }
+
             return response.model;
+        }
+
+        /// <summary>
+        /// Deletes elements from ElementDataModel by name.
+        /// Uses reflection to call ElementDataModel.DeleteElement(elementId).
+        /// </summary>
+        internal static void DeleteElementsByName(ElementDataModel elementDataModel, List<string> namesToDelete, DiagnosticsLogger log)
+        {
+            try
+            {
+                // Get Elements property
+                var elementsProperty = typeof(ElementDataModel).GetProperty("Elements", BindingFlags.Public | BindingFlags.Instance);
+                if (elementsProperty == null)
+                {
+                    log.Error("Could not find Elements property on ElementDataModel");
+                    return;
+                }
+
+                var elements = elementsProperty.GetValue(elementDataModel) as System.Collections.IEnumerable;
+                if (elements == null)
+                {
+                    log.Info("No existing elements to check for replacement");
+                    return;
+                }
+
+                // Find DeleteElement method
+                var deleteMethod = typeof(ElementDataModel).GetMethod("DeleteElement",
+                    BindingFlags.Public | BindingFlags.Instance,
+                    null,
+                    new[] { typeof(string) },
+                    null);
+
+                if (deleteMethod == null)
+                {
+                    log.Error("DeleteElement method not found on ElementDataModel - cannot perform replaceByName");
+                    return;
+                }
+
+                // Build set of names to delete for fast lookup
+                var namesToDeleteSet = new HashSet<string>(namesToDelete, StringComparer.OrdinalIgnoreCase);
+
+                // Find elements to delete
+                var elementsToDelete = new List<(string id, string name)>();
+                foreach (var element in elements.Cast<object>())
+                {
+                    var nameProp = element.GetType().GetProperty("Name", BindingFlags.Public | BindingFlags.Instance);
+                    var idProp = element.GetType().GetProperty("Id", BindingFlags.Public | BindingFlags.Instance);
+
+                    if (nameProp != null && idProp != null)
+                    {
+                        var elementName = nameProp.GetValue(element)?.ToString();
+                        var elementId = idProp.GetValue(element)?.ToString();
+
+                        if (!string.IsNullOrEmpty(elementName) && namesToDeleteSet.Contains(elementName))
+                        {
+                            elementsToDelete.Add((elementId, elementName));
+                        }
+                    }
+                }
+
+                // Delete matched elements
+                foreach (var (id, name) in elementsToDelete)
+                {
+                    try
+                    {
+                        deleteMethod.Invoke(elementDataModel, new object[] { id });
+                        log.Info($"Deleted existing element '{name}' (ID: {id}) for replacement");
+                    }
+                    catch (Exception ex)
+                    {
+                        log.Error($"Failed to delete element '{name}': {ex.Message}");
+                    }
+                }
+
+                if (elementsToDelete.Count > 0)
+                {
+                    log.Info($"Deleted {elementsToDelete.Count} existing element(s) for replacement");
+                }
+            }
+            catch (Exception ex)
+            {
+                log.Error($"Error during element deletion: {ex.Message}");
+            }
         }
 
         #endregion
