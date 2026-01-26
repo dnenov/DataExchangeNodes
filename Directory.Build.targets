@@ -1,0 +1,48 @@
+<Project>
+  <!-- Import local Dynamo configuration if it exists -->
+  <Import Project="$(MSBuildThisFileDirectory)dynamo.local.props" Condition="Exists('$(MSBuildThisFileDirectory)dynamo.local.props')" />
+
+  <!-- Inform user if config file doesn't exist -->
+  <Target Name="CheckDynamoConfig" BeforeTargets="Build" Condition="!Exists('$(MSBuildThisFileDirectory)dynamo.local.props')">
+    <Message Importance="high" Text="[Optional] To auto-copy LibG files to your Dynamo build, create 'dynamo.local.props' with:" />
+    <Message Importance="high" Text="  &lt;Project&gt;&lt;PropertyGroup&gt;&lt;DynamoBuildFolder&gt;YOUR_PATH_HERE&lt;/DynamoBuildFolder&gt;&lt;/PropertyGroup&gt;&lt;/Project&gt;" />
+  </Target>
+
+  <!-- Copy LibG files to Dynamo build folder after build -->
+  <Target Name="CopyLibGToDynamoBuild" AfterTargets="Build" Condition="'$(DynamoBuildFolder)' != '' And Exists('$(DynamoBuildFolder)')">
+
+    <PropertyGroup>
+      <LibGRootDir>$(MSBuildThisFileDirectory)libg\RootDir</LibGRootDir>
+      <LibG231Dir>$(MSBuildThisFileDirectory)libg\libg_231_0_0</LibG231Dir>
+    </PropertyGroup>
+
+    <!-- Gather files from RootDir -->
+    <ItemGroup>
+      <RootDirFiles Include="$(LibGRootDir)\**\*" Condition="Exists('$(LibGRootDir)')" />
+    </ItemGroup>
+
+    <!-- Gather files from libg_231_0_0 -->
+    <ItemGroup>
+      <LibG231Files Include="$(LibG231Dir)\**\*" Condition="Exists('$(LibG231Dir)')" />
+    </ItemGroup>
+
+    <!-- Copy RootDir contents to Dynamo build folder root -->
+    <Copy SourceFiles="@(RootDirFiles)"
+          DestinationFiles="@(RootDirFiles->'$(DynamoBuildFolder)\%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true"
+          Condition="'@(RootDirFiles)' != ''" />
+
+    <!-- Copy libg_231_0_0 contents to Dynamo build folder\libg_231_0_0 -->
+    <Copy SourceFiles="@(LibG231Files)"
+          DestinationFiles="@(LibG231Files->'$(DynamoBuildFolder)\libg_231_0_0\%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true"
+          Condition="'@(LibG231Files)' != ''" />
+
+    <Message Importance="high" Text="Copied LibG files to Dynamo build: $(DynamoBuildFolder)" Condition="'@(RootDirFiles)' != '' Or '@(LibG231Files)' != ''" />
+  </Target>
+
+  <!-- Warning if DynamoBuildFolder is set but doesn't exist -->
+  <Target Name="WarnDynamoBuildFolderMissing" AfterTargets="Build" Condition="'$(DynamoBuildFolder)' != '' And !Exists('$(DynamoBuildFolder)')">
+    <Warning Text="DynamoBuildFolder is set to '$(DynamoBuildFolder)' but the folder does not exist. LibG files were not copied." />
+  </Target>
+</Project>

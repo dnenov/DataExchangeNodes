@@ -159,6 +159,20 @@ namespace DataExchangeNodes.DataExchange
             {
                 log.Info("Replace mode: replaceAll - creating fresh ElementDataModel");
                 var freshModel = ElementDataModel.Create(client);
+
+                // CRITICAL: Must sync the fresh model to the exchange BEFORE using it
+                // Without this sync, the SDK doesn't properly register the new model
+                // and subsequent operations (like GetElementDataModel) return stale data
+                var syncResponse = client.SyncExchangeDataAsync(identifier, freshModel).GetAwaiter().GetResult();
+                if (!syncResponse.IsSuccess)
+                {
+                    var errorDetails = syncResponse.Errors != null && syncResponse.Errors.Any()
+                        ? string.Join(", ", syncResponse.Errors.Select(e => e.ToString()))
+                        : "Unknown error";
+                    throw new InvalidOperationException($"Failed to initialize fresh ElementDataModel: {errorDetails}");
+                }
+                log.Info("Synced fresh ElementDataModel to exchange");
+
                 return freshModel;
             }
 
@@ -1100,7 +1114,14 @@ END-ISO-10303-21;
 
                 AddRenderStylesToAssetInfos(client, clientType, assetInfosList, exchangeData, exchangeDataType, log);
 
+                // Backup SMB files before upload - SDK deletes them during UploadGeometries
+                var smbBackups = BackupSmbFiles(log);
+
                 await UploadGeometriesAsync(client, clientType, identifier, fulfillmentId, assetInfosList, exchangeData, exchangeDataType, log);
+
+                // Restore SMB files after upload - needed for ClearLocalStates
+                RestoreSmbFiles(smbBackups, log);
+
                 await UploadCustomGeometriesAsync(client, clientType, identifier, fulfillmentId, exchangeData, exchangeDataType, log);
                 await UploadLargePrimitiveGeometriesAsync(client, clientType, identifier, fulfillmentId, exchangeData, exchangeDataType, log);
 
@@ -2070,6 +2091,73 @@ END-ISO-10303-21;
         internal static Dictionary<string, string> GetSmbPathMappings()
         {
             return new Dictionary<string, string>(GeometryAssetIdToSmbPath);
+        }
+
+        /// <summary>
+        /// Backs up all SMB files before upload (SDK deletes them during UploadGeometries).
+        /// Returns a dictionary of original path -> backup path.
+        /// </summary>
+        private static Dictionary<string, string> BackupSmbFiles(DiagnosticsLogger log)
+        {
+            var backups = new Dictionary<string, string>();
+
+            foreach (var kvp in GeometryAssetIdToSmbPath)
+            {
+                var smbPath = kvp.Value;
+                if (File.Exists(smbPath))
+                {
+                    var backupPath = smbPath + ".backup";
+                    try
+                    {
+                        File.Copy(smbPath, backupPath, overwrite: true);
+                        backups[smbPath] = backupPath;
+                        log.Info($"[SMB Backup] Created: {backupPath}");
+                    }
+                    catch (Exception ex)
+                    {
+                        log.Info($"[SMB Backup] Failed to backup {smbPath}: {ex.Message}");
+                    }
+                }
+            }
+
+            return backups;
+        }
+
+        /// <summary>
+        /// Restores SMB files from backups after upload (needed for ClearLocalStates).
+        /// </summary>
+        private static void RestoreSmbFiles(Dictionary<string, string> backups, DiagnosticsLogger log)
+        {
+            foreach (var kvp in backups)
+            {
+                var originalPath = kvp.Key;
+                var backupPath = kvp.Value;
+
+                if (!File.Exists(originalPath) && File.Exists(backupPath))
+                {
+                    try
+                    {
+                        File.Move(backupPath, originalPath);
+                        log.Info($"[SMB Restore] Restored: {originalPath}");
+                    }
+                    catch (Exception ex)
+                    {
+                        log.Info($"[SMB Restore] Failed to restore {originalPath}: {ex.Message}");
+                    }
+                }
+                else if (File.Exists(backupPath))
+                {
+                    // Original still exists, just clean up backup
+                    try
+                    {
+                        File.Delete(backupPath);
+                    }
+                    catch
+                    {
+                        // Ignore cleanup errors
+                    }
+                }
+            }
         }
 
         #endregion

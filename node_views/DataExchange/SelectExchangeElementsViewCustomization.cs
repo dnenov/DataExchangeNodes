@@ -653,7 +653,7 @@ namespace DataExchangeNodes.NodeViews.DataExchange
                         {
                             contentText.Text = "Selection restored";
 
-                            // Trigger node re-evaluation to propagate stored selection to downstream nodes
+                            // Trigger node re-evaluation to propagate stored selection to downstream nodes 
                             dynamoViewModel?.Model?.Logger?.Log("[SelectExchange] Triggering node re-evaluation for saved selection");
                             nodeModel?.OnNodeModified(forceExecute: true);
                         }));
