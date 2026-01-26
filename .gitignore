@@ -100,9 +100,6 @@ dynamo-package/
 claude.dm
 .claude/
 
-# Local Dynamo build configuration (user-specific paths)
-dynamo.local.props
-
 # Markdown files (except README.md)
 *.md
 !README.md

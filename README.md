@@ -12,21 +12,15 @@ Dynamo nodes for integrating with **Autodesk DataExchange** (ACC/BIM 360). Brows
 
 **This package requires custom LibG files** that provide SMB geometry support not included in Dynamo's default `ProtoGeometry.dll`.
 
-If you're building Dynamo from source, create `dynamo.local.props` in the repository root:
+If you're building Dynamo from source, open `dynamo.local.props` and set your Dynamo build path:
 
 ```xml
-<Project>
-  <PropertyGroup>
-    <DynamoBuildFolder>C:\path\to\Dynamo\bin\AnyCPU\Debug</DynamoBuildFolder>
-  </PropertyGroup>
-</Project>
+<DynamoBuildFolder>C:\path\to\Dynamo\bin\AnyCPU\Debug</DynamoBuildFolder>
 ```
 
 On build, the following files are automatically copied to your Dynamo folder:
 - `libg/RootDir/*` → `[DynamoBuildFolder]/` (ProtoGeometry.dll, LibG.Interface.dll)
 - `libg/libg_231_0_0/*` → `[DynamoBuildFolder]/libg_231_0_0/`
-
-> **Note:** `dynamo.local.props` is gitignored — each developer sets their own path.
 
 ---
 

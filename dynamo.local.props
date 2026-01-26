@@ -1,0 +1,6 @@
+<Project>
+  <PropertyGroup>
+    <!-- Set this to your local Dynamo build output folder -->
+    <DynamoBuildFolder></DynamoBuildFolder>
+  </PropertyGroup>
+</Project>

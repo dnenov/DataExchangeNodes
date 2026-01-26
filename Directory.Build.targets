@@ -2,10 +2,9 @@
   <!-- Import local Dynamo configuration if it exists -->
   <Import Project="$(MSBuildThisFileDirectory)dynamo.local.props" Condition="Exists('$(MSBuildThisFileDirectory)dynamo.local.props')" />
 
-  <!-- Inform user if config file doesn't exist -->
-  <Target Name="CheckDynamoConfig" BeforeTargets="Build" Condition="!Exists('$(MSBuildThisFileDirectory)dynamo.local.props')">
-    <Message Importance="high" Text="[Optional] To auto-copy LibG files to your Dynamo build, create 'dynamo.local.props' with:" />
-    <Message Importance="high" Text="  &lt;Project&gt;&lt;PropertyGroup&gt;&lt;DynamoBuildFolder&gt;YOUR_PATH_HERE&lt;/DynamoBuildFolder&gt;&lt;/PropertyGroup&gt;&lt;/Project&gt;" />
+  <!-- Inform user if DynamoBuildFolder is not set -->
+  <Target Name="CheckDynamoConfig" BeforeTargets="Build" Condition="'$(DynamoBuildFolder)' == ''">
+    <Message Importance="high" Text="[Optional] To auto-copy LibG files to your Dynamo build, set DynamoBuildFolder in 'dynamo.local.props'" />
   </Target>
 
   <!-- Copy LibG files to Dynamo build folder after build -->
