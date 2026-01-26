@@ -97,3 +97,5 @@ $RECYCLE.BIN/
 # Dynamo package output
 dynamo-package/
 
+claude.dm
+.claude/

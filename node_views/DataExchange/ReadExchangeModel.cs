@@ -85,115 +85,58 @@ namespace DataExchangeNodes.NodeViews.DataExchange
 
         public override Task<bool> SelectElementsAsync(List<string> exchangeIds)
         {
-            Logger?.Log("========== SelectElementsAsync CALLED ==========");
-            Logger?.Log($"Received {exchangeIds?.Count ?? 0} exchange IDs");
-            
             try
             {
-                // When an exchange is selected, capture its metadata
-                if (exchangeIds != null && exchangeIds.Any() && CurrentNode != null)
+                if (exchangeIds == null || !exchangeIds.Any() || CurrentNode == null)
                 {
-                    var exchangeId = exchangeIds.First();
-                    var exchange = _localStorage.FirstOrDefault(e => e.ExchangeID == exchangeId);
-
-                    if (exchange != null)
-                    {
-                        // ===== DETAILED LOGGING: Inspect all properties of exchange object =====
-                        Logger?.Log("========== DataExchange Object Properties ==========");
-                        var exchangeType = exchange.GetType();
-                        foreach (var prop in exchangeType.GetProperties(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance))
-                        {
-                            try
-                            {
-                                var value = prop.GetValue(exchange);
-                                var valueStr = value?.ToString() ?? "(null)";
-                                Logger?.Log($"  {prop.Name} ({prop.PropertyType.Name}): {valueStr}");
-                            }
-                            catch (Exception propEx)
-                            {
-                                Logger?.Log($"  {prop.Name}: [Error reading: {propEx.Message}]");
-                            }
-                        }
-                        Logger?.Log("=====================================================");
-                        
-                        // Try to serialize the entire exchange object to JSON for inspection
-                        try
-                        {
-                            var fullJson = JsonConvert.SerializeObject(exchange, Formatting.Indented, 
-                                new JsonSerializerSettings { ReferenceLoopHandling = ReferenceLoopHandling.Ignore });
-                            Logger?.Log("========== Full Exchange JSON ==========");
-                            Logger?.Log(fullJson);
-                            Logger?.Log("=========================================");
-                        }
-                        catch (Exception jsonEx)
-                        {
-                            Logger?.Log($"Could not serialize full exchange to JSON: {jsonEx.Message}");
-                        }
-
-                        // Create selection data dictionary with ALL available fields
-                        var selectionData = new Dictionary<string, string>
-                        {
-                            // Core identifiers
-                            { "exchangeId", exchange.ExchangeID ?? "" },
-                            { "collectionId", exchange.CollectionID ?? "" },
-                            
-                            // Human-readable info
-                            { "exchangeTitle", exchange.ExchangeTitle ?? "" },
-                            { "exchangeDescription", exchange.ExchangeDescription ?? "" },
-                            { "projectName", exchange.ProjectName ?? "" },
-                            { "folderPath", exchange.FolderPath ?? "" },
-                            
-                            // User info
-                            { "createdBy", exchange.CreatedBy ?? "" },
-                            { "updatedBy", exchange.UpdatedBy ?? "" },
-                            
-                            // URNs and IDs
-                            { "projectUrn", exchange.ProjectURN ?? "" },
-                            { "fileUrn", exchange.FileURN ?? "" },
-                            { "folderUrn", exchange.FolderURN ?? "" },
-                            { "fileVersionId", exchange.FileVersionId ?? "" },
-                            { "hubId", exchange.HubId ?? "" },
-                            { "hubRegion", exchange.HubRegion ?? "" },
-                            
-                            // Timestamps
-                            { "createTime", exchange.CreateTime.ToString("o") },
-                            { "updated", exchange.Updated.ToString("o") },
-                            { "timestamp", DateTime.Now.ToString("o") },
-                            
-                            // Additional metadata
-                            { "schemaNamespace", exchange.SchemaNamespace ?? "" },
-                            { "exchangeThumbnail", exchange.ExchangeThumbnail ?? "" },
-                            { "projectType", exchange.ProjectType.ToString() },
-                            { "isUpdateAvailable", exchange.IsUpdateAvailable.ToString() }
-                        };
-                        
-                        // Log what we're storing
-                        Logger?.Log("========== Storing Selection Data ==========");
-                        Logger?.Log(JsonConvert.SerializeObject(selectionData, Formatting.Indented));
-                        Logger?.Log("============================================");
-
-                        // Serialize and store in node
-                        string selectionJson = JsonConvert.SerializeObject(selectionData);
-                        CurrentNode.Value = selectionJson;
-                        CurrentNode.OnNodeModified(forceExecute: true);
-                        Logger?.Log($"ReadExchangeModel: Selection stored and node updated");
-                    }
-                    else
-                    {
-                        Logger?.Log($"ReadExchangeModel: Exchange with ID '{exchangeId}' not found in local storage");
-                    }
+                    return Task.FromResult(false);
                 }
-                else
+
+                var exchangeId = exchangeIds.First();
+                var exchange = _localStorage.FirstOrDefault(e => e.ExchangeID == exchangeId);
+
+                if (exchange == null)
                 {
-                    Logger?.Log($"ReadExchangeModel: Invalid input - exchangeIds: {exchangeIds?.Count ?? 0}, CurrentNode: {(CurrentNode != null ? "set" : "null")}");
+                    Logger?.Log($"ReadExchangeModel: Exchange '{exchangeId}' not found");
+                    return Task.FromResult(false);
                 }
+
+                // Create selection data dictionary
+                var selectionData = new Dictionary<string, string>
+                {
+                    { "exchangeId", exchange.ExchangeID ?? "" },
+                    { "collectionId", exchange.CollectionID ?? "" },
+                    { "exchangeTitle", exchange.ExchangeTitle ?? "" },
+                    { "exchangeDescription", exchange.ExchangeDescription ?? "" },
+                    { "projectName", exchange.ProjectName ?? "" },
+                    { "folderPath", exchange.FolderPath ?? "" },
+                    { "createdBy", exchange.CreatedBy ?? "" },
+                    { "updatedBy", exchange.UpdatedBy ?? "" },
+                    { "projectUrn", exchange.ProjectURN ?? "" },
+                    { "fileUrn", exchange.FileURN ?? "" },
+                    { "folderUrn", exchange.FolderURN ?? "" },
+                    { "fileVersionId", exchange.FileVersionId ?? "" },
+                    { "hubId", exchange.HubId ?? "" },
+                    { "hubRegion", exchange.HubRegion ?? "" },
+                    { "createTime", exchange.CreateTime.ToString("o") },
+                    { "updated", exchange.Updated.ToString("o") },
+                    { "timestamp", DateTime.Now.ToString("o") },
+                    { "schemaNamespace", exchange.SchemaNamespace ?? "" },
+                    { "exchangeThumbnail", exchange.ExchangeThumbnail ?? "" },
+                    { "projectType", exchange.ProjectType.ToString() },
+                    { "isUpdateAvailable", exchange.IsUpdateAvailable.ToString() }
+                };
+
+                // Serialize and store in node
+                string selectionJson = JsonConvert.SerializeObject(selectionData);
+                CurrentNode.Value = selectionJson;
+                CurrentNode.OnNodeModified(forceExecute: true);
 
                 return Task.FromResult(true);
             }
             catch (Exception ex)
             {
-                Logger?.Log($"ReadExchangeModel: Error in SelectElementsAsync - {ex.Message}");
-                Logger?.Log($"Stack trace: {ex.StackTrace}");
+                Logger?.Log($"ReadExchangeModel: Error - {ex.Message}");
                 return Task.FromResult(false);
             }
         }

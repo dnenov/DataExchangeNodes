@@ -85,14 +85,14 @@ namespace DataExchangeNodes.DataExchange
         }
 
         /// <summary>
-        /// Inspects an Exchange and returns detailed information about its contents
+        /// Inspects an Exchange and returns summary information about its contents
         /// </summary>
         [MultiReturn(new[] { "report", "elementCount", "geometryAssetCount", "designAssetCount", "customParameters", "elementDataModel", "success" })]
         public static Dictionary<string, object> Inspect(
             Exchange exchange,
             bool includeDetails = true)
         {
-            var report = new List<string>();
+            var log = new DiagnosticsLogger(DiagnosticLevel.Error);
             var elementCount = 0;
             var geometryAssetCount = 0;
             var designAssetCount = 0;
@@ -102,225 +102,64 @@ namespace DataExchangeNodes.DataExchange
 
             try
             {
-                report.Add("=== Exchange Inspection ===");
-                report.Add($"Exchange: {exchange?.ExchangeTitle ?? "N/A"} (ID: {exchange?.ExchangeId ?? "N/A"})");
-                report.Add($"Collection ID: {exchange?.CollectionId ?? "N/A"}");
-                report.Add("");
-
                 if (exchange == null)
                 {
-                    return CreateErrorResult(report, "Exchange is null", customParameters, null);
+                    log.Error("Exchange is null");
+                    return CreateErrorResult(log, "Exchange is null", customParameters, null);
                 }
 
-                // Get Client instance using centralized DataExchangeClient
                 var client = DataExchangeClient.GetClient();
                 if (client == null)
                 {
-                    return CreateErrorResult(report, "Could not get Client instance. Make sure you have selected an Exchange first using the SelectExchangeElements node.", customParameters, null);
+                    log.Error("Client not initialized. Select an Exchange first using SelectExchangeElements node.");
+                    return CreateErrorResult(log, "Client not initialized", customParameters, null);
                 }
 
-                // Create DataExchangeIdentifier
-                var identifier = CreateDataExchangeIdentifier(exchange);
-                
-                // Diagnostic: Log identifier details and verify they match the Exchange object
-                report.Add($"=== DataExchangeIdentifier Details ===");
-                report.Add($"From Exchange object:");
-                report.Add($"  Exchange.ExchangeId: {exchange?.ExchangeId ?? "null"}");
-                report.Add($"  Exchange.CollectionId: {exchange?.CollectionId ?? "null"}");
-                report.Add($"  Exchange.HubId: {exchange?.HubId ?? "null"}");
-                report.Add($"");
-                report.Add($"Created DataExchangeIdentifier:");
-                report.Add($"  ExchangeId: {identifier.ExchangeId ?? "null"}");
-                report.Add($"  CollectionId: {identifier.CollectionId ?? "null"}");
-                report.Add($"  HubId: {identifier.HubId ?? "null"}");
-                
-                // Verify the identifier matches the exchange
-                bool identifierValid = true;
-                if (string.IsNullOrEmpty(identifier.ExchangeId))
-                {
-                    report.Add($"✗ ERROR: ExchangeId is null or empty!");
-                    identifierValid = false;
-                }
-                if (string.IsNullOrEmpty(identifier.CollectionId))
-                {
-                    report.Add($"✗ ERROR: CollectionId is null or empty!");
-                    identifierValid = false;
-                }
-                if (string.IsNullOrEmpty(identifier.HubId))
-                {
-                    report.Add($"⚠️ WARNING: HubId is missing from Exchange - this may cause GetElementDataModelAsync to fail");
-                    report.Add($"  Attempting to get HubId from client...");
-                    
-                    // Try to get HubId from client if available
-                    try
-                    {
-                        // Check if client has GetHubIdAsync method
-                        var getHubIdMethod = client.GetType().GetMethod("GetHubIdAsync", 
-                            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
-                        if (getHubIdMethod != null && !string.IsNullOrEmpty(exchange.CollectionId))
-                        {
-                            // Try to get HubId from project URN or collection
-                            // Note: This might not work if we don't have project URN
-                            report.Add($"  Client has GetHubIdAsync method, but need project URN to use it");
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        report.Add($"  Could not get HubId from client: {ex.Message}");
-                    }
-                }
-                
-                if (!identifierValid)
-                {
-                    return CreateErrorResult(report, "DataExchangeIdentifier is invalid - missing required fields", customParameters, null);
-                }
-                
-                report.Add($"");
-                
-                // Get Exchange Revisions/Versions
-                report.Add("");
-                report.Add($"=== Exchange Revisions/Versions ===");
-                try
-                {
-                    var revisionsResponse = Task.Run(async () => await client.GetExchangeRevisionsAsync(identifier)).Result;
-                    if (revisionsResponse != null && revisionsResponse.Value != null && revisionsResponse.Value.Any())
-                    {
-                        var revisions = revisionsResponse.Value.ToList();
-                        report.Add($"Total Revisions: {revisions.Count}");
-                        report.Add($"");
-                        
-                        // Latest revision (first in list)
-                        var latestRevision = revisions.First();
-                        report.Add($"📌 Latest Revision:");
-                        report.Add($"  ID: {latestRevision.Id ?? "null"}");
-                        
-                        // Try to get additional properties from revision
-                        var revisionType = latestRevision.GetType();
-                        var createdDateProp = revisionType.GetProperty("CreatedDate", BindingFlags.Public | BindingFlags.Instance);
-                        if (createdDateProp != null)
-                        {
-                            var createdDate = createdDateProp.GetValue(latestRevision);
-                            report.Add($"  Created Date: {createdDate ?? "N/A"}");
-                        }
-                        
-                        var createdByProp = revisionType.GetProperty("CreatedBy", BindingFlags.Public | BindingFlags.Instance);
-                        if (createdByProp != null)
-                        {
-                            var createdBy = createdByProp.GetValue(latestRevision);
-                            report.Add($"  Created By: {createdBy ?? "N/A"}");
-                        }
-                        
-                        // Show all revisions if there are multiple
-                        if (revisions.Count > 1)
-                        {
-                            report.Add($"");
-                            report.Add($"All Revisions ({revisions.Count} total):");
-                            for (int i = 0; i < revisions.Count; i++)
-                            {
-                                var rev = revisions[i];
-                                var marker = i == 0 ? "📌 (Latest)" : $"  {i + 1}.";
-                                report.Add($"{marker} {rev.Id ?? "null"}");
-                                
-                                if (createdDateProp != null)
-                                {
-                                    var createdDate = createdDateProp.GetValue(rev);
-                                    if (createdDate != null)
-                                    {
-                                        report.Add($"     Created: {createdDate}");
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    else
-                    {
-                        report.Add($"⚠️ WARNING: No revisions found for this exchange");
-                    }
-                }
-                catch (Exception ex)
-                {
-                    report.Add($"✗ ERROR: Could not get exchange revisions: {ex.GetType().Name}: {ex.Message}");
-                    if (ex.InnerException != null)
-                    {
-                        report.Add($"  Inner Exception: {ex.InnerException.Message}");
-                    }
-                }
-                report.Add("");
+                var identifier = DataExchangeUtils.CreateIdentifier(exchange);
 
-                // Get ElementDataModel using the dedicated async helper function
-                // Pattern matches grasshopper-connector: Task.Run(async () => await ...).Result
-                report.Add($"=== Calling GetElementDataModelAsync ===");
-                report.Add($"  Using DataExchangeIdentifier:");
-                report.Add($"    ExchangeId: {identifier.ExchangeId}");
-                report.Add($"    CollectionId: {identifier.CollectionId}");
-                report.Add($"    HubId: {identifier.HubId ?? "null"}");
-                report.Add($"");
-                
-                var (model, isSuccess, errorMessage) = Task.Run(async () => 
+                if (string.IsNullOrEmpty(identifier.ExchangeId) || string.IsNullOrEmpty(identifier.CollectionId))
+                {
+                    log.Error("Invalid identifier - missing ExchangeId or CollectionId");
+                    return CreateErrorResult(log, "Invalid identifier", customParameters, null);
+                }
+
+                var (model, isSuccess, errorMessage) = Task.Run(async () =>
                     await DataExchangeClient.GetElementDataModelWithErrorInfoAsync(identifier, CancellationToken.None)).Result;
-                
-                report.Add($"  Response.IsSuccess: {isSuccess}");
-                
-                if (!isSuccess)
+
+                if (!isSuccess || model == null)
                 {
-                    report.Add($"✗ ERROR: GetElementDataModelAsync failed");
-                    if (!string.IsNullOrEmpty(errorMessage))
-                    {
-                        report.Add($"  Error: {errorMessage}");
-                    }
-                    return CreateErrorResult(report, $"Could not load ElementDataModel: {errorMessage ?? "Unknown error"}", customParameters, null);
+                    log.Error($"Failed to load ElementDataModel: {errorMessage ?? "Unknown error"}");
+                    return CreateErrorResult(log, errorMessage ?? "Failed to load ElementDataModel", customParameters, null);
                 }
 
-                if (model == null)
-                {
-                    report.Add($"✗ ERROR: ElementDataModel is null (IsSuccess was true but model is null)");
-                    return CreateErrorResult(report, "Could not load ElementDataModel - model is null", customParameters, null);
-                }
-                
-                report.Add($"✓ Successfully loaded ElementDataModel: {model.GetType().FullName}");
-
-                // Get ExchangeData
                 var exchangeDataField = typeof(ElementDataModel).GetField("exchangeData", BindingFlags.NonPublic | BindingFlags.Instance);
                 if (exchangeDataField == null)
                 {
-                    report.Add("✗ ERROR: Could not find exchangeData field");
-                    return CreateErrorResult(report, "Could not access ExchangeData from ElementDataModel", customParameters, null);
+                    log.Error("Could not access ExchangeData field");
+                    return CreateErrorResult(log, "Could not access ExchangeData", customParameters, null);
                 }
 
                 var exchangeData = exchangeDataField.GetValue(model);
                 var exchangeDataType = exchangeData.GetType();
-                
+
                 elementDataModel = model;
 
-                report.Add("✓ Successfully loaded ElementDataModel");
-                report.Add("");
-
-                // Inspect Elements and collect custom parameters
-                elementCount = InspectElements(model, report, includeDetails);
-                customParameters = CollectCustomParameters(model, report);
-
-                // Inspect GeometryAssets
-                geometryAssetCount = InspectGeometryAssets(exchangeData, exchangeDataType, report, includeDetails);
-
-                // Inspect DesignAssets
-                designAssetCount = InspectDesignAssets(exchangeData, exchangeDataType, report, includeDetails);
+                // Get counts only (no verbose output)
+                elementCount = GetElementCount(model);
+                customParameters = CollectCustomParametersMinimal(model);
+                geometryAssetCount = GetGeometryAssetCount(exchangeData, exchangeDataType);
+                designAssetCount = GetDesignAssetCount(exchangeData, exchangeDataType);
 
                 success = true;
-                report.Add("=== Inspection Complete ===");
             }
             catch (Exception ex)
             {
-                report.Add($"✗ ERROR: {ex.GetType().Name}: {ex.Message}"); 
-                report.Add($"Stack: {ex.StackTrace}");
-                if (ex.InnerException != null)
-                {
-                    report.Add($"Inner: {ex.InnerException.Message}");
-                }
+                log.Error($"{ex.GetType().Name}: {ex.Message}");
             }
 
             return new Dictionary<string, object>
             {
-                { "report", string.Join("\n", report) },
+                { "report", log.GetLog() },
                 { "elementCount", elementCount },
                 { "geometryAssetCount", geometryAssetCount },
                 { "designAssetCount", designAssetCount },
@@ -343,6 +182,109 @@ namespace DataExchangeNodes.DataExchange
                 { "elementDataModel", elementDataModel },
                 { "success", false }
             };
+        }
+
+        private static Dictionary<string, object> CreateErrorResult(DiagnosticsLogger log, string errorMessage, Dictionary<string, object> customParameters = null, ElementDataModel elementDataModel = null)
+        {
+            return new Dictionary<string, object>
+            {
+                { "report", log.GetLog() },
+                { "elementCount", 0 },
+                { "geometryAssetCount", 0 },
+                { "designAssetCount", 0 },
+                { "customParameters", customParameters ?? new Dictionary<string, object>() },
+                { "elementDataModel", elementDataModel },
+                { "success", false }
+            };
+        }
+
+        private static int GetElementCount(ElementDataModel model)
+        {
+            var elementsProperty = typeof(ElementDataModel).GetProperty("Elements", BindingFlags.Public | BindingFlags.Instance);
+            if (elementsProperty == null) return 0;
+
+            var elements = elementsProperty.GetValue(model) as System.Collections.IEnumerable;
+            if (elements == null) return 0;
+
+            return elements.Cast<object>().Count();
+        }
+
+        private static int GetGeometryAssetCount(object exchangeData, Type exchangeDataType)
+        {
+            var geometryAssetType = exchangeDataType.Assembly.GetType("Autodesk.DataExchange.SchemaObjects.Assets.GeometryAsset");
+            if (geometryAssetType == null) return 0;
+
+            var getAssetsByTypeMethod = exchangeDataType.GetMethod("GetAssetsByType", BindingFlags.Public | BindingFlags.Instance);
+            if (getAssetsByTypeMethod == null) return 0;
+
+            var genericMethod = getAssetsByTypeMethod.MakeGenericMethod(geometryAssetType);
+            var geometryAssets = genericMethod.Invoke(exchangeData, null) as System.Collections.IEnumerable;
+            if (geometryAssets == null) return 0;
+
+            return geometryAssets.Cast<object>().Count();
+        }
+
+        private static int GetDesignAssetCount(object exchangeData, Type exchangeDataType)
+        {
+            var designAssetType = exchangeDataType.Assembly.GetType("Autodesk.DataExchange.SchemaObjects.Assets.DesignAsset");
+            if (designAssetType == null) return 0;
+
+            var getAssetsByTypeMethod = exchangeDataType.GetMethod("GetAssetsByType", BindingFlags.Public | BindingFlags.Instance);
+            if (getAssetsByTypeMethod == null) return 0;
+
+            var genericMethod = getAssetsByTypeMethod.MakeGenericMethod(designAssetType);
+            var designAssets = genericMethod.Invoke(exchangeData, null) as System.Collections.IEnumerable;
+            if (designAssets == null) return 0;
+
+            return designAssets.Cast<object>().Count();
+        }
+
+        private static Dictionary<string, object> CollectCustomParametersMinimal(ElementDataModel model)
+        {
+            var customParameters = new Dictionary<string, object>();
+
+            try
+            {
+                var elementsProperty = typeof(ElementDataModel).GetProperty("Elements", BindingFlags.Public | BindingFlags.Instance);
+                if (elementsProperty == null) return customParameters;
+
+                var elements = elementsProperty.GetValue(model) as System.Collections.IEnumerable;
+                if (elements == null) return customParameters;
+
+                foreach (var element in elements.Cast<object>())
+                {
+                    try
+                    {
+                        var elementIdProp = element.GetType().GetProperty("Id", BindingFlags.Public | BindingFlags.Instance);
+                        var elementId = elementIdProp?.GetValue(element)?.ToString() ?? "Unknown";
+
+                        var properties = element.GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance);
+                        foreach (var prop in properties)
+                        {
+                            if (prop.Name == "Id" || prop.Name == "Name" || prop.Name == "Properties" ||
+                                prop.Name == "Asset" || prop.Name == "Parent" || prop.Name == "ChildNodes")
+                                continue;
+
+                            try
+                            {
+                                var value = prop.GetValue(element);
+                                if (value != null)
+                                {
+                                    var key = $"{elementId}.{prop.Name}";
+                                    customParameters[key] = value is string || value.GetType().IsPrimitive || value.GetType().IsEnum
+                                        ? value
+                                        : value.ToString();
+                                }
+                            }
+                            catch { }
+                        }
+                    }
+                    catch { }
+                }
+            }
+            catch { }
+
+            return customParameters;
         }
 
         private static Dictionary<string, object> CreateFileErrorResult(List<string> report, string errorMessage, string logFilePath)
@@ -379,7 +321,7 @@ namespace DataExchangeNodes.DataExchange
                 return;
             }
 
-            var identifier = CreateDataExchangeIdentifier(exchange);
+            var identifier = DataExchangeUtils.CreateIdentifier(exchange);
             
             // Diagnostic: Log identifier details
             report.Add($"DataExchangeIdentifier:");
@@ -533,21 +475,6 @@ namespace DataExchangeNodes.DataExchange
             report.Add("=".PadRight(80, '='));
             report.Add("END OF INSPECTION REPORT");
             report.Add("=".PadRight(80, '='));
-        }
-
-
-        private static DataExchangeIdentifier CreateDataExchangeIdentifier(Exchange exchange)
-        {
-            var identifier = new DataExchangeIdentifier
-            {
-                ExchangeId = exchange.ExchangeId,
-                CollectionId = exchange.CollectionId
-            };
-            if (!string.IsNullOrEmpty(exchange.HubId))
-            {
-                identifier.HubId = exchange.HubId;
-            }
-            return identifier;
         }
 
 

@@ -5,6 +5,7 @@ using System.Reflection;
 using System.Threading.Tasks;
 using Autodesk.DataExchange.Core.Interface;
 using Autodesk.DataExchange.Core.Models;
+using Autodesk.DesignScript.Runtime;
 using Dynamo.Core;
 using Dynamo.ViewModels;
 using Greg.AuthProviders;
@@ -15,7 +16,8 @@ namespace DataExchangeNodes.NodeViews.DataExchange
     /// <summary>
     /// Authentication provider for DataExchange SDK using Dynamo's AuthenticationManager
     /// </summary>
-    public class DynamoAuthProvider : IAuth
+    [IsVisibleInDynamoLibrary(false)]
+    internal class DynamoAuthProvider : IAuth
     {
         private readonly DynamoViewModel _dynamoViewModel;
         private UserAccount _cachedUserAccount;

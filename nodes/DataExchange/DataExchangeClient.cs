@@ -8,6 +8,7 @@ using Autodesk.DataExchange.Core.Interface;
 using Autodesk.DataExchange.Core.Models;
 using Autodesk.DataExchange.DataModels;
 using Autodesk.DataExchange.Models;
+using Autodesk.DesignScript.Runtime;
 
 namespace DataExchangeNodes.DataExchange
 {
@@ -15,9 +16,10 @@ namespace DataExchangeNodes.DataExchange
     /// Centralized DataExchange Client management.
     /// Provides a consistent way to initialize and access the DataExchange Client instance
     /// across all nodes in the DataExchangeNodes project.
-    /// 
+    ///
     /// Pattern matches the grasshopper-connector's ReadExchangesData.InitializeClient approach.
     /// </summary>
+    [IsVisibleInDynamoLibrary(false)]
     public static class DataExchangeClient
     {
         private static Client _client;
@@ -154,25 +156,6 @@ namespace DataExchangeNodes.DataExchange
                 // Re-throw to preserve error information - GetElementDataModelWithErrorInfoAsync will catch it
                 throw;
             }
-        }
-
-        /// <summary>
-        /// Gets the ElementDataModel for the specified exchange and extracts the value, handling errors properly.
-        /// This is a convenience method that checks IsSuccess and uses ValueOrDefault to safely extract the model.
-        /// </summary>
-        /// <param name="exchangeIdentifier">The exchange identifier</param>
-        /// <param name="cancellationToken">Cancellation token</param>
-        /// <returns>The ElementDataModel if successful, or null if failed or not available</returns>
-        public static async Task<ElementDataModel> GetElementDataModelValueAsync(DataExchangeIdentifier exchangeIdentifier, CancellationToken cancellationToken = default)
-        {
-            var response = await GetElementDataModelAsync(exchangeIdentifier, cancellationToken);
-            if (response == null)
-            {
-                return null;
-            }
-
-            // Use ValueOrDefault which safely returns null for failed responses
-            return response.ValueOrDefault;
         }
 
         /// <summary>
