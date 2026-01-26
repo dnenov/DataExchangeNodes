@@ -251,6 +251,14 @@ namespace DataExchangeNodes.DataExchange
             return tree;
         }
 
+        // Internal SDK GroupAsset names that should be skipped in traversal
+        private static readonly HashSet<string> InternalGroupAssetNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "Geometry",
+            "Exported",
+            "SMB"
+        };
+
         /// <summary>
         /// Builds an ExchangeTreeNode from an Asset object
         /// </summary>
@@ -267,6 +275,15 @@ namespace DataExchangeNodes.DataExchange
             {
                 var assetType = asset.GetType();
                 var assetTypeName = assetType.Name;
+
+                // Get Name early to check for internal GroupAssets
+                string name = GetAssetName(asset, assetType) ?? assetTypeName;
+
+                // Skip internal SDK GroupAssets (they create duplicate paths to the same geometries)
+                if (assetTypeName == "GroupAsset" && InternalGroupAssetNames.Contains(name))
+                {
+                    return null;
+                }
 
                 // Get ID
                 string id = null;
@@ -286,9 +303,6 @@ namespace DataExchangeNodes.DataExchange
                 {
                     return tree.Nodes[id];
                 }
-
-                // Get Name (from ObjectInfo.Name or direct Name property)
-                string name = GetAssetName(asset, assetType) ?? assetTypeName;
 
                 // Check if has geometry
                 bool hasGeometry = assetTypeName == "GeometryAsset" ||

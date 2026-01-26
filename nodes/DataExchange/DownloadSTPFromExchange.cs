@@ -24,7 +24,7 @@ namespace DataExchangeNodes.DataExchange
         [MultiReturn(new[] { "success", "diagnostics", "stepFilePaths", "geometryCount" })]
         public static Dictionary<string, object> Download(Exchange exchange, string outputDirectory)
         {
-            var log = new DiagnosticsLogger(DiagnosticLevel.Error);
+            var log = new DiagnosticsLogger(DiagnosticLevel.Info);
             var stepFilePaths = new List<string>();
             int geometryCount = 0;
 
@@ -104,6 +104,11 @@ namespace DataExchangeNodes.DataExchange
 
                 // Get geometry count
                 geometryCount = GetGeometryCount(elementDataModel);
+
+                // Report success stats
+                var fileInfo = new FileInfo(outputFilePath);
+                var fileSizeKB = fileInfo.Length / 1024.0;
+                log.Info($"Downloaded '{exchange.ExchangeTitle}' as STEP | Geometries: {geometryCount} | Size: {fileSizeKB:F1} KB");
 
                 return BuildResult(log, true, stepFilePaths, geometryCount);
             }

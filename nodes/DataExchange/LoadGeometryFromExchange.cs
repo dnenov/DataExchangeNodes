@@ -41,7 +41,7 @@ namespace DataExchangeNodes.DataExchange
             string unit = "kUnitType_CentiMeter")
         {
             var geometries = new List<Geometry>();
-            var log = new DiagnosticsLogger(DiagnosticLevel.Error);
+            var log = new DiagnosticsLogger(DiagnosticLevel.Info);
             bool success = false;
 
             try
@@ -56,6 +56,13 @@ namespace DataExchangeNodes.DataExchange
                 var loadedGeometries = SMBLoaderHelper.LoadGeometryFromSMB(smbFilePath, unit, log);
                 geometries.AddRange(loadedGeometries);
                 success = geometries.Count > 0;
+
+                if (success)
+                {
+                    var fileInfo = new FileInfo(smbFilePath);
+                    var fileSizeKB = fileInfo.Length / 1024.0;
+                    log.Info($"Loaded {geometries.Count} geometry(s) from SMB | Size: {fileSizeKB:F1} KB");
+                }
             }
             catch (Exception ex)
             {
@@ -86,7 +93,7 @@ namespace DataExchangeNodes.DataExchange
         {
             var geometries = new List<Geometry>();
             var smbFilePaths = new List<string>();
-            var log = new DiagnosticsLogger(DiagnosticLevel.Error);
+            var log = new DiagnosticsLogger(DiagnosticLevel.Info);
             bool success = false;
 
             try
@@ -134,7 +141,18 @@ namespace DataExchangeNodes.DataExchange
                 success = geometries.Count > 0;
                 if (success)
                 {
-                    log.Info($"Loaded {geometries.Count} geometry object(s) from exchange '{exchange.ExchangeTitle}'");
+                    // Calculate total file size of downloaded SMB files
+                    long totalBytes = 0;
+                    foreach (var path in smbFilePaths)
+                    {
+                        if (File.Exists(path))
+                        {
+                            totalBytes += new FileInfo(path).Length;
+                        }
+                    }
+                    var totalSizeKB = totalBytes / 1024.0;
+
+                    log.Info($"Loaded {geometries.Count} geometry(s) from '{exchange.ExchangeTitle}' | Files: {smbFilePaths.Count} | Size: {totalSizeKB:F1} KB");
                 }
             }
             catch (Exception ex)
@@ -169,7 +187,7 @@ namespace DataExchangeNodes.DataExchange
         {
             var geometries = new List<Geometry>();
             var loadedIds = new List<string>();
-            var log = new DiagnosticsLogger(DiagnosticLevel.Error);
+            var log = new DiagnosticsLogger(DiagnosticLevel.Info);
             bool success = false;
 
             try
@@ -225,7 +243,7 @@ namespace DataExchangeNodes.DataExchange
                 success = geometries.Count > 0;
                 if (success)
                 {
-                    log.Info($"Loaded {geometries.Count} geometry object(s) from {loadedIds.Count} element(s)");
+                    log.Info($"Loaded {geometries.Count} geometry(s) from {loadedIds.Count} element(s) | Requested: {elementIds.Count} IDs");
                 }
             }
             catch (Exception ex)
@@ -261,7 +279,7 @@ namespace DataExchangeNodes.DataExchange
         {
             var geometries = new List<Geometry>();
             var loadedNames = new List<string>();
-            var log = new DiagnosticsLogger(DiagnosticLevel.Error);
+            var log = new DiagnosticsLogger(DiagnosticLevel.Info);
             bool success = false;
 
             try
@@ -317,7 +335,7 @@ namespace DataExchangeNodes.DataExchange
                 success = geometries.Count > 0;
                 if (success)
                 {
-                    log.Info($"Loaded {geometries.Count} geometry object(s) from {loadedNames.Count} element(s)");
+                    log.Info($"Loaded {geometries.Count} geometry(s) from {loadedNames.Count} element(s) | Requested: {elementNames.Count} names");
                 }
             }
             catch (Exception ex)

@@ -92,7 +92,7 @@ namespace DataExchangeNodes.DataExchange
             Exchange exchange,
             bool includeDetails = true)
         {
-            var log = new DiagnosticsLogger(DiagnosticLevel.Error);
+            var log = new DiagnosticsLogger(DiagnosticLevel.Info);
             var elementCount = 0;
             var geometryAssetCount = 0;
             var designAssetCount = 0;
@@ -150,6 +150,36 @@ namespace DataExchangeNodes.DataExchange
                 geometryAssetCount = GetGeometryAssetCount(exchangeData, exchangeDataType);
                 designAssetCount = GetDesignAssetCount(exchangeData, exchangeDataType);
 
+                // Build summary report
+                var reportLines = new List<string>();
+                reportLines.Add($"Exchange: {exchange.ExchangeTitle}");
+                reportLines.Add($"Elements: {elementCount}");
+                reportLines.Add($"Geometry Assets: {geometryAssetCount}");
+                reportLines.Add($"Design Assets: {designAssetCount}");
+
+                // Get element names if available
+                if (elementCount > 0 && elementCount <= 20)
+                {
+                    var elementNames = GetElementNames(model);
+                    if (elementNames.Count > 0)
+                    {
+                        reportLines.Add($"Element Names: {string.Join(", ", elementNames)}");
+                    }
+                }
+                else if (elementCount > 20)
+                {
+                    var elementNames = GetElementNames(model);
+                    var preview = elementNames.Take(5).ToList();
+                    reportLines.Add($"Element Names (first 5): {string.Join(", ", preview)}...");
+                }
+
+                // Get custom parameter count
+                if (customParameters.Count > 0)
+                {
+                    reportLines.Add($"Custom Parameters: {customParameters.Count}");
+                }
+
+                log.Info(string.Join("\n", reportLines));
                 success = true;
             }
             catch (Exception ex)
@@ -167,6 +197,31 @@ namespace DataExchangeNodes.DataExchange
                 { "elementDataModel", elementDataModel },
                 { "success", success }
             };
+        }
+
+        private static List<string> GetElementNames(ElementDataModel model)
+        {
+            var names = new List<string>();
+            try
+            {
+                var elementsProperty = typeof(ElementDataModel).GetProperty("Elements", BindingFlags.Public | BindingFlags.Instance);
+                if (elementsProperty == null) return names;
+
+                var elements = elementsProperty.GetValue(model) as System.Collections.IEnumerable;
+                if (elements == null) return names;
+
+                foreach (var element in elements.Cast<object>())
+                {
+                    var nameProp = element.GetType().GetProperty("Name", BindingFlags.Public | BindingFlags.Instance);
+                    var name = nameProp?.GetValue(element)?.ToString();
+                    if (!string.IsNullOrEmpty(name))
+                    {
+                        names.Add(name);
+                    }
+                }
+            }
+            catch { }
+            return names;
         }
 
         private static Dictionary<string, object> CreateErrorResult(List<string> report, string errorMessage, Dictionary<string, object> customParameters = null, ElementDataModel elementDataModel = null)

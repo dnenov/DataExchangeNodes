@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
@@ -45,6 +46,7 @@ namespace DataExchangeNodes.NodeViews.DataExchange
         private static bool _shutdownEventSubscribed = false; // Track shutdown event subscription (singleton)
         private static Dynamo.Models.DynamoModel _dynamoModel; // Hold reference for unsubscription
         private static bool _clientInitializedThisSession = false; // Track if we've already auto-initialized
+        private static DynamoAuthProvider _staticAuthProvider; // Static auth provider that persists across workspace changes
         private DynamoAuthProvider authProvider;
         private bool autoTriggerEnabled = true; // Flag to control auto-trigger
 
@@ -154,9 +156,10 @@ namespace DataExchangeNodes.NodeViews.DataExchange
                 Log($"  - SelectElementsAsync returned: {success}");
 
                 // Update UI text to show selection result (fixes "UI opened" stuck state)
+                // Use BeginInvoke to avoid blocking during workspace close
                 if (contentText != null)
                 {
-                    contentText.Dispatcher.Invoke(() =>
+                    contentText.Dispatcher.BeginInvoke(new Action(() =>
                     {
                         if (success)
                         {
@@ -168,7 +171,7 @@ namespace DataExchangeNodes.NodeViews.DataExchange
                             contentText.Text = "Selection failed";
                             contentText.Foreground = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Colors.Orange);
                         }
-                    });
+                    }));
                 }
 
                 // Close the UI after successful selection
@@ -189,11 +192,11 @@ namespace DataExchangeNodes.NodeViews.DataExchange
                 dynamoViewModel?.Model?.Logger?.Log($"SelectExchangeElements: Error in auto-trigger: {ex.Message}");
                 if (contentText != null)
                 {
-                    contentText.Dispatcher.Invoke(() =>
+                    contentText.Dispatcher.BeginInvoke(new Action(() =>
                     {
                         contentText.Text = "Selection error";
                         contentText.Foreground = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Colors.Red);
-                    });
+                    }));
                 }
             }
         }
@@ -232,12 +235,13 @@ namespace DataExchangeNodes.NodeViews.DataExchange
 
             // Create storage and hosting provider
             var storage = new Storage(appBasePath);
-            var hostingProvider = new ACC(logger, () => authProvider.GetToken());
+            // Use static auth provider to avoid null reference when workspace changes
+            var hostingProvider = new ACC(logger, () => _staticAuthProvider?.GetToken());
 
             // Configure SDK options
             var sdkOptions = new SDKOptions
             {
-                AuthProvider = authProvider,
+                AuthProvider = _staticAuthProvider,
                 Storage = storage,
                 HostingProvider = hostingProvider,
                 Logger = logger,
@@ -267,7 +271,7 @@ namespace DataExchangeNodes.NodeViews.DataExchange
             }
 
             // Register auth provider for LoadGeometryFromExchange node
-            DataExchangeNodes.DataExchange.LoadGeometryFromExchange.RegisterAuthProvider(() => authProvider.GetToken());
+            DataExchangeNodes.DataExchange.LoadGeometryFromExchange.RegisterAuthProvider(() => _staticAuthProvider?.GetToken());
 
             dynamoViewModel?.Model?.Logger?.Log("[SelectExchange] Client initialized for saved graph (no UI/bridge)");
 
@@ -333,12 +337,13 @@ namespace DataExchangeNodes.NodeViews.DataExchange
 
                 // Create storage and hosting provider
                 var storage = new Storage(appBasePath);
-                var hostingProvider = new ACC(logger, () => authProvider.GetToken());
+                // Use static auth provider to avoid null reference when workspace changes
+                var hostingProvider = new ACC(logger, () => _staticAuthProvider?.GetToken());
 
                 // Configure SDK options (matching grasshopper-connector pattern)
                 var sdkOptions = new SDKOptions
                 {
-                    AuthProvider = authProvider,
+                    AuthProvider = _staticAuthProvider,
                     Storage = storage,
                     HostingProvider = hostingProvider,
                     Logger = logger,
@@ -389,7 +394,7 @@ namespace DataExchangeNodes.NodeViews.DataExchange
                 }
 
                 // Register auth provider for LoadGeometryFromExchange node
-                DataExchangeNodes.DataExchange.LoadGeometryFromExchange.RegisterAuthProvider(() => authProvider.GetToken());
+                DataExchangeNodes.DataExchange.LoadGeometryFromExchange.RegisterAuthProvider(() => _staticAuthProvider?.GetToken());
 
                 // Update current node reference
                 ReadExchangeModel.CurrentNode = nodeModel;
@@ -404,8 +409,43 @@ namespace DataExchangeNodes.NodeViews.DataExchange
                     _readModel.PreloadExchangeFromSelection(nodeModel.Value);
                 }
 
-                // Initialize bridge if not already done
-                if (_bridge == null)
+                // Initialize bridge if not already done, or recreate if invalid
+                bool needNewBridge = _bridge == null;
+
+                // If bridge exists, verify it's still usable
+                if (!needNewBridge)
+                {
+                    try
+                    {
+                        // Test if bridge is still valid by checking if it responds
+                        // If this throws, the bridge is in a bad state and needs recreation
+                        Log("Verifying existing InteropBridge is valid...");
+                        // Simple test - if bridge was disposed internally this will throw
+                        var testState = _bridge.GetType().GetProperty("IsInitialized");
+                        if (testState != null)
+                        {
+                            var isInit = testState.GetValue(_bridge);
+                            Log($"Bridge IsInitialized: {isInit}");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Log($"Existing bridge is invalid ({ex.Message}), will recreate");
+                        needNewBridge = true;
+                        // Dispose the old bridge reference
+                        try
+                        {
+                            if (_bridge is IDisposable disposableBridge)
+                            {
+                                disposableBridge.Dispose();
+                            }
+                        }
+                        catch { }
+                        _bridge = null;
+                    }
+                }
+
+                if (needNewBridge)
                 {
                     Log("Creating new InteropBridge...");
                     var bridgeOptions = InteropBridgeOptions.FromClient(_client);
@@ -443,10 +483,63 @@ namespace DataExchangeNodes.NodeViews.DataExchange
                     Log("Reusing existing InteropBridge");
                 }
 
-                // Launch the DataExchange UI
+                // Launch the DataExchange UI with recovery logic
                 Log("Launching DataExchange UI...");
-                await _bridge.LaunchConnectorUiAsync();
-                _bridge.SetWindowState(Autodesk.DataExchange.UI.Core.Enums.WindowState.Show);
+                try
+                {
+                    await _bridge.LaunchConnectorUiAsync();
+                    _bridge.SetWindowState(Autodesk.DataExchange.UI.Core.Enums.WindowState.Show);
+                }
+                catch (NullReferenceException ex)
+                {
+                    Log($"Bridge operation failed with NullReference: {ex.Message}");
+                    Log("Attempting to recreate bridge...");
+
+                    // Bridge is in bad state - recreate it
+                    try
+                    {
+                        if (_bridge is IDisposable disposableBridge)
+                        {
+                            disposableBridge.Dispose();
+                        }
+                    }
+                    catch { }
+                    _bridge = null;
+
+                    // Create new bridge
+                    var bridgeOptions = InteropBridgeOptions.FromClient(_client);
+                    bridgeOptions.Exchange = _readModel;
+
+                    IntPtr windowHandle = IntPtr.Zero;
+                    try
+                    {
+                        if (Application.Current?.MainWindow != null)
+                        {
+                            var helper = new System.Windows.Interop.WindowInteropHelper(Application.Current.MainWindow);
+                            windowHandle = helper.Handle;
+                        }
+                        else
+                        {
+                            windowHandle = Process.GetCurrentProcess().MainWindowHandle;
+                        }
+                    }
+                    catch
+                    {
+                        windowHandle = Process.GetCurrentProcess().MainWindowHandle;
+                    }
+
+                    bridgeOptions.HostWindowHandle = windowHandle;
+                    bridgeOptions.Invoker = new MainThreadInvoker(
+                        System.Windows.Threading.Dispatcher.CurrentDispatcher);
+
+                    _bridge = InteropBridgeFactory.Create(bridgeOptions);
+                    await _bridge.InitializeAsync();
+                    Log("InteropBridge recreated after failure");
+
+                    // Retry the launch
+                    await _bridge.LaunchConnectorUiAsync();
+                    _bridge.SetWindowState(Autodesk.DataExchange.UI.Core.Enums.WindowState.Show);
+                }
                 Log("UI launched - waiting for user to click an exchange");
                 Log("NOTE: Simply click an exchange name to select it (auto-selection enabled)");
 
@@ -495,8 +588,11 @@ namespace DataExchangeNodes.NodeViews.DataExchange
             // Get DynamoViewModel for authentication
             dynamoViewModel = nodeView.ViewModel.DynamoViewModel;
             authProvider = new DynamoAuthProvider(dynamoViewModel);
+            // Update static auth provider so SDK lambdas always have a valid reference
+            _staticAuthProvider = authProvider;
 
             // Subscribe to Dynamo shutdown event (singleton fashion - only once)
+            // NOTE: Bridge persists across workspaces - only cleaned up on Dynamo shutdown
             if (!_shutdownEventSubscribed && dynamoViewModel?.Model != null)
             {
                 _dynamoModel = dynamoViewModel.Model;
@@ -506,7 +602,7 @@ namespace DataExchangeNodes.NodeViews.DataExchange
             }
 
             // Register auth provider for LoadGeometryFromExchange node (for saved graphs)
-            DataExchangeNodes.DataExchange.LoadGeometryFromExchange.RegisterAuthProvider(() => authProvider.GetToken());
+            DataExchangeNodes.DataExchange.LoadGeometryFromExchange.RegisterAuthProvider(() => _staticAuthProvider?.GetToken());
 
             // Create the Select button
             buttonControl = new Button()
@@ -539,7 +635,7 @@ namespace DataExchangeNodes.NodeViews.DataExchange
             }
             else if (!string.IsNullOrEmpty(model.Value) && !_clientInitializedThisSession)
             {
-                // Auto-initialize client for saved graphs (Part 4.2 fix)
+                // Auto-initialize client for saved graphs
                 // Only do this once per session to avoid race conditions with multiple nodes
                 // NOTE: This uses direct API calls - NO UI/bridge is created here
                 _clientInitializedThisSession = true;
@@ -552,15 +648,15 @@ namespace DataExchangeNodes.NodeViews.DataExchange
                         await InitializeClientForSavedGraphAsync(savedValue);
 
                         // Force node to re-evaluate so selection propagates downstream
-                        // Must be done on UI thread
-                        contentText.Dispatcher.Invoke(() =>
+                        // Must be done on UI thread - use BeginInvoke to avoid deadlock
+                        contentText.Dispatcher.BeginInvoke(new Action(() =>
                         {
                             contentText.Text = "Selection restored";
 
                             // Trigger node re-evaluation to propagate stored selection to downstream nodes
                             dynamoViewModel?.Model?.Logger?.Log("[SelectExchange] Triggering node re-evaluation for saved selection");
-                            nodeModel.OnNodeModified(forceExecute: true);
-                        });
+                            nodeModel?.OnNodeModified(forceExecute: true);
+                        }));
                     }
                     catch (Exception ex)
                     {
@@ -576,11 +672,12 @@ namespace DataExchangeNodes.NodeViews.DataExchange
             }
 
             // Listen for node value changes (use Dispatcher since this may be called from background thread)
+            // Use BeginInvoke to avoid blocking during workspace close
             model.PropertyChanged += (s, e) =>
             {
                 if (e.PropertyName == nameof(model.Value))
                 {
-                    contentText.Dispatcher.Invoke(() =>
+                    contentText.Dispatcher.BeginInvoke(new Action(() =>
                     {
                         contentText.Text = string.IsNullOrEmpty(model.Value) ? "No selection" : "Selection stored";
                         contentText.Foreground = (System.Windows.Media.Brush)SharedDictionaryManager.DynamoModernDictionary["PrimaryCharcoal100Brush"];
@@ -598,7 +695,7 @@ namespace DataExchangeNodes.NodeViews.DataExchange
                                 // Non-critical - UI may already be closed
                             }
                         }
-                    });
+                    }));
                 }
             };
 
