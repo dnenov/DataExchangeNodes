@@ -125,17 +125,6 @@ Uploads STEP geometry files to a DataExchange using public async methods.
 
 ---
 
-### Solution: SMB → STEP Conversion
-
-Since the formats are incompatible, we use **Autodesk.DesignTranslator.NET.dll** to convert:
-
-1. **ProtoGeometry SMB** → **STEP** (using DesignTranslator)
-2. **STEP** → **DX-Compatible SMB** (or upload STEP directly to DataExchange)
-
-This is why `ConvertSmbToStep` and `UploadStepToExchange` nodes are being developed - they provide a reliable conversion path using the public Autodesk DesignTranslator API.
-
----
-
 ## 🛠️ Prerequisites
 
 ### Required Software
