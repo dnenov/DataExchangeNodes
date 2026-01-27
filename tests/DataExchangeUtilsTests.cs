@@ -1,3 +1,5 @@
+using System;
+using System.Threading.Tasks;
 using DataExchangeNodes.DataExchange;
 using FluentAssertions;
 using Newtonsoft.Json;
@@ -208,9 +210,8 @@ namespace DataExchangeNodes.Tests
         #endregion
 
         #region CreateIdentifier Tests
-        // Note: CreateIdentifier tests are skipped because they require Autodesk.DataExchange.Core
-        // assembly which is only available at runtime within Dynamo, not in the test environment.
-        // These methods would need integration testing within the Dynamo context.
+        // Note: CreateIdentifier tests require Autodesk.DataExchange.Core SDK which is only
+        // available at runtime within Dynamo. These tests are marked as integration tests.
 
         [Test]
         [Ignore("Requires Autodesk.DataExchange.Core SDK - integration test only")]
@@ -298,7 +299,144 @@ namespace DataExchangeNodes.Tests
             var identifier = DataExchangeUtils.CreateIdentifier(exchange);
 
             // Assert
-            identifier.HubId.Should().BeNull();
+            // Empty string should not set HubId (stays as default)
+            identifier.HubId.Should().BeNullOrEmpty();
+        }
+
+        #endregion
+
+        #region GetValidatedClient Tests
+        // Note: GetValidatedClient tests require DataExchangeClient which depends on the SDK
+
+        [Test]
+        [Ignore("Requires Autodesk.DataExchange SDK - integration test only")]
+        public void GetValidatedClient_WhenNotInitialized_ReturnsInvalidWithErrorMessage()
+        {
+            // Arrange
+            DataExchangeClient.Reset();
+
+            // Act
+            var (client, isValid, errorMessage) = DataExchangeUtils.GetValidatedClient();
+
+            // Assert
+            client.Should().BeNull();
+            isValid.Should().BeFalse();
+            errorMessage.Should().Contain("not initialized");
+        }
+
+        [Test]
+        [Ignore("Requires Autodesk.DataExchange SDK - integration test only")]
+        public void GetValidatedClient_WhenNotInitialized_ErrorMessageMentionsSelectExchangeElements()
+        {
+            // Arrange
+            DataExchangeClient.Reset();
+
+            // Act
+            var (_, _, errorMessage) = DataExchangeUtils.GetValidatedClient();
+
+            // Assert
+            errorMessage.Should().Contain("SelectExchangeElements");
+        }
+
+        #endregion
+
+        #region RunSync Tests
+
+        [Test]
+        public void RunSync_WithAsyncFunction_ReturnsResult()
+        {
+            // Arrange
+            async Task<int> asyncFunc() => await Task.FromResult(42);
+
+            // Act
+            var result = DataExchangeUtils.RunSync(asyncFunc);
+
+            // Assert
+            result.Should().Be(42);
+        }
+
+        [Test]
+        public void RunSync_WithAsyncFunctionReturningString_ReturnsResult()
+        {
+            // Arrange
+            async Task<string> asyncFunc() => await Task.FromResult("hello");
+
+            // Act
+            var result = DataExchangeUtils.RunSync(asyncFunc);
+
+            // Assert
+            result.Should().Be("hello");
+        }
+
+        [Test]
+        public void RunSync_WithAsyncFunctionThatThrows_PropagatesException()
+        {
+            // Arrange
+            async Task<int> asyncFunc()
+            {
+                await Task.Delay(1);
+                throw new InvalidOperationException("Test exception");
+            }
+
+            // Act
+            Action act = () => DataExchangeUtils.RunSync(asyncFunc);
+
+            // Assert
+            act.Should().Throw<InvalidOperationException>()
+                .WithMessage("Test exception");
+        }
+
+        [Test]
+        public void RunSync_WithAsyncAction_Completes()
+        {
+            // Arrange
+            bool executed = false;
+            async Task asyncAction()
+            {
+                await Task.Delay(1);
+                executed = true;
+            }
+
+            // Act
+            DataExchangeUtils.RunSync(asyncAction);
+
+            // Assert
+            executed.Should().BeTrue();
+        }
+
+        [Test]
+        public void RunSync_WithAsyncActionThatThrows_PropagatesException()
+        {
+            // Arrange
+            async Task asyncAction()
+            {
+                await Task.Delay(1);
+                throw new ArgumentException("Test action exception");
+            }
+
+            // Act
+            Action act = () => DataExchangeUtils.RunSync(asyncAction);
+
+            // Assert
+            act.Should().Throw<ArgumentException>()
+                .WithMessage("Test action exception");
+        }
+
+        [Test]
+        public void RunSync_WithDelayedAsyncFunction_WaitsForCompletion()
+        {
+            // Arrange
+            async Task<int> asyncFunc()
+            {
+                await Task.Delay(50);
+                return 100;
+            }
+
+            // Act
+            var result = DataExchangeUtils.RunSync(asyncFunc);
+
+            // Assert
+            result.Should().Be(100);
         }
 
         #endregion
