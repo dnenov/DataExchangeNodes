@@ -25,6 +25,45 @@ namespace DataExchangeNodes.DataExchange
         private const string AssetInfoTypeName = "Autodesk.GeometryUtilities.SDK.AssetInfo";
         private const string AssetInfoAltTypeName = "Autodesk.DataExchange.DataModels.AssetInfo";
 
+        // Session ID to make SMB filenames unique per download, avoiding file locking issues
+        private static string GetSessionSuffix() => DateTime.Now.ToString("HHmmss_fff");
+
+        /// <summary>
+        /// Cleans up old SMB files from the temp directory to prevent accumulation.
+        /// Deletes files older than the specified age (default 1 hour).
+        /// </summary>
+        private static void CleanupOldSMBFiles(string directory, TimeSpan? maxAge = null)
+        {
+            if (string.IsNullOrEmpty(directory) || !Directory.Exists(directory))
+                return;
+
+            var cutoff = DateTime.Now - (maxAge ?? TimeSpan.FromHours(1));
+
+            try
+            {
+                var smbFiles = Directory.GetFiles(directory, "*.smb");
+                foreach (var file in smbFiles)
+                {
+                    try
+                    {
+                        var lastWrite = File.GetLastWriteTime(file);
+                        if (lastWrite < cutoff)
+                        {
+                            File.Delete(file);
+                        }
+                    }
+                    catch
+                    {
+                        // File may be locked - skip it
+                    }
+                }
+            }
+            catch
+            {
+                // Directory access failed - ignore
+            }
+        }
+
         #region Download Coordination
 
         /// <summary>
@@ -42,6 +81,9 @@ namespace DataExchangeNodes.DataExchange
                 : downloadDirectory;
             if (!Directory.Exists(tempDir))
                 Directory.CreateDirectory(tempDir);
+
+            // Clean up old SMB files from previous sessions (older than 1 hour)
+            CleanupOldSMBFiles(tempDir);
 
             var client = DataExchangeClient.GetClient();
             if (client == null)
@@ -98,6 +140,9 @@ namespace DataExchangeNodes.DataExchange
                 : downloadDirectory;
             if (!Directory.Exists(tempDir))
                 Directory.CreateDirectory(tempDir);
+
+            // Clean up old SMB files from previous sessions (older than 1 hour)
+            CleanupOldSMBFiles(tempDir);
 
             var client = DataExchangeClient.GetClient();
             if (client == null)
@@ -172,6 +217,7 @@ namespace DataExchangeNodes.DataExchange
             }
 
             // Convert each binary data to SMB
+            var sessionSuffix = GetSessionSuffix();
             int index = 0;
             foreach (var (binaryData, geometryAsset, assetInfo) in allBinaryData)
             {
@@ -180,7 +226,7 @@ namespace DataExchangeNodes.DataExchange
 
                 index++;
                 var geometryAssetId = GetAssetId(geometryAsset) ?? index.ToString();
-                var smbFilePath = Path.Combine(tempDir, $"Exchange_{exchange.ExchangeId}_{exchange.CollectionId}_{geometryAssetId}.smb");
+                var smbFilePath = Path.Combine(tempDir, $"Exchange_{exchange.ExchangeId}_{sessionSuffix}_{geometryAssetId}.smb");
 
                 var success = ConvertBinaryToSMB(
                     client, binaryData, geometryAsset, assetInfo, smbFilePath, allMethods, log);
@@ -222,6 +268,7 @@ namespace DataExchangeNodes.DataExchange
             log?.Info($"Found {filteredBinaryData.Count} geometry asset(s) matching filter");
 
             // Convert each binary data to SMB
+            var sessionSuffix = GetSessionSuffix();
             int index = 0;
             foreach (var (binaryData, geometryAsset, assetInfo, assetName) in filteredBinaryData)
             {
@@ -231,8 +278,8 @@ namespace DataExchangeNodes.DataExchange
                 index++;
                 var geometryAssetId = GetAssetId(geometryAsset) ?? index.ToString();
                 var smbFileName = !string.IsNullOrEmpty(assetName)
-                    ? $"{assetName}_{geometryAssetId}.smb"
-                    : $"Exchange_{exchange.ExchangeId}_{geometryAssetId}.smb";
+                    ? $"{assetName}_{sessionSuffix}_{geometryAssetId}.smb"
+                    : $"Exchange_{exchange.ExchangeId}_{sessionSuffix}_{geometryAssetId}.smb";
                 var smbFilePath = Path.Combine(tempDir, smbFileName);
 
                 var success = ConvertBinaryToSMB(
