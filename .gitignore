@@ -100,7 +100,9 @@ dynamo-package/
 claude.dm
 .claude/
 
-# Markdown files (except README.md and TESTING.md)
+# Markdown files (except README.md)
 *.md
 !README.md
-!TESTING.md
+
+# Backup files
+*.bak

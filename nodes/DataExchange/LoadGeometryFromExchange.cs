@@ -251,13 +251,12 @@ namespace DataExchangeNodes.DataExchange
                 log.Error($"{ex.GetType().Name}: {ex.Message}");
             }
 
-            return new Dictionary<string, object>
-            {
-                { "geometries", geometries },
-                { "loadedIds", loadedIds },
-                { "log", log.GetLog() },
-                { "success", success }
-            };
+            return new NodeResultBuilder()
+                .WithSuccess(success)
+                .WithLog(log)
+                .WithProperty("geometries", geometries)
+                .WithProperty("loadedIds", loadedIds)
+                .Build();
         }
 
         /// <summary>
@@ -343,13 +342,120 @@ namespace DataExchangeNodes.DataExchange
                 log.Error($"{ex.GetType().Name}: {ex.Message}");
             }
 
-            return new Dictionary<string, object>
+            return new NodeResultBuilder()
+                .WithSuccess(success)
+                .WithLog(log)
+                .WithProperty("geometries", geometries)
+                .WithProperty("loadedNames", loadedNames)
+                .Build();
+        }
+
+        /// <summary>
+        /// Loads geometry from a DataExchange using element names from the structure tree.
+        /// Uses the ExchangeTree (from GetExchangeStructure) to resolve element names to geometry IDs,
+        /// then downloads only those geometries. This bridges the gap between element names visible
+        /// in the tree and the underlying geometry assets.
+        /// </summary>
+        /// <param name="exchange">Exchange object from SelectExchange node</param>
+        /// <param name="tree">ExchangeTree from GetExchangeStructure.GetStructure</param>
+        /// <param name="elementNames">List of element/asset names to load (from structure tree)</param>
+        /// <param name="unit">Unit type for geometry (default: "kUnitType_CentiMeter")</param>
+        /// <param name="downloadDirectory">Optional directory for downloaded files</param>
+        /// <returns>Dictionary with "geometries", "matchedNames", "log", and "success"</returns>
+        [MultiReturn(new[] { "geometries", "matchedNames", "log", "success" })]
+        public static Dictionary<string, object> LoadByElementNames(
+            Exchange exchange,
+            ExchangeTree tree,
+            List<string> elementNames,
+            string unit = "kUnitType_CentiMeter",
+            [DefaultArgument("")] string downloadDirectory = "")
+        {
+            var geometries = new List<Geometry>();
+            var matchedNames = new List<string>();
+            var log = new DiagnosticsLogger(DiagnosticLevel.Info);
+            bool success = false;
+
+            try
             {
-                { "geometries", geometries },
-                { "loadedNames", loadedNames },
-                { "log", log.GetLog() },
-                { "success", success }
-            };
+                // Validate inputs
+                if (exchange == null)
+                    throw new ArgumentNullException(nameof(exchange), "Exchange cannot be null");
+
+                if (tree == null)
+                    throw new ArgumentNullException(nameof(tree), "ExchangeTree cannot be null. Use GetExchangeStructure.GetStructure to get it.");
+
+                if (elementNames == null || elementNames.Count == 0)
+                    throw new ArgumentException("Element names list cannot be null or empty", nameof(elementNames));
+
+                if (_getTokenFunc == null)
+                    throw new InvalidOperationException("Authentication not configured. Please use SelectExchange node first to log in.");
+
+                var accessToken = _getTokenFunc();
+                if (string.IsNullOrEmpty(accessToken))
+                    throw new InvalidOperationException("Not logged in. Please log in to Dynamo first.");
+
+                // Resolve element names to geometry IDs using the tree
+                var (geometryIds, resolvedNames) = tree.ResolveGeometryIds(elementNames);
+                matchedNames = resolvedNames;
+
+                log.Info($"Resolving {elementNames.Count} name(s) to geometry IDs...");
+                log.Info($"  Matched names: {matchedNames.Count} of {elementNames.Count}");
+                log.Info($"  Resolved geometry IDs: {geometryIds.Count}");
+
+                if (geometryIds.Count == 0)
+                {
+                    log.Info("No geometry IDs resolved from the provided names. Check that names match entries in the tree.");
+                    return new NodeResultBuilder()
+                        .WithSuccess(false)
+                        .WithLog(log)
+                        .WithProperty("geometries", geometries)
+                        .WithProperty("matchedNames", matchedNames)
+                        .Build();
+                }
+
+                // Create ID set for filtering
+                var idSet = new HashSet<string>(geometryIds);
+
+                // Download SMB files with ID filter
+                var resolvedDownloadDir = SMBLoaderHelper.ResolveDownloadDirectory(downloadDirectory);
+                var smbFilePaths = SMBLoaderHelper.DownloadSelectedSMBFilesAsync(
+                    exchange, resolvedDownloadDir, idSet, null, log)
+                    .GetAwaiter().GetResult();
+
+                // Load geometry from downloaded files
+                foreach (var smbFilePath in smbFilePaths)
+                {
+                    if (!string.IsNullOrEmpty(smbFilePath) && File.Exists(smbFilePath))
+                    {
+                        try
+                        {
+                            var geometriesFromFile = SMBLoaderHelper.LoadGeometryFromSMB(smbFilePath, unit, log);
+                            geometries.AddRange(geometriesFromFile);
+                        }
+                        catch (Exception ex)
+                        {
+                            log.Error($"Failed to load {Path.GetFileName(smbFilePath)}: {ex.Message}");
+                        }
+                    }
+                }
+
+                success = geometries.Count > 0;
+                if (success)
+                {
+                    log.Info($"Loaded {geometries.Count} geometry(s) from {matchedNames.Count} matched name(s)");
+                }
+            }
+            catch (Exception ex)
+            {
+                log.Error($"{ex.GetType().Name}: {ex.Message}");
+            }
+
+            return new NodeResultBuilder()
+                .WithSuccess(success)
+                .WithLog(log)
+                .WithProperty("geometries", geometries)
+                .WithProperty("matchedNames", matchedNames)
+                .Build();
         }
     }
 }

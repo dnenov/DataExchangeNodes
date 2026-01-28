@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Autodesk.DesignScript.Runtime;
 
 namespace DataExchangeNodes.DataExchange
@@ -247,6 +248,62 @@ namespace DataExchangeNodes.DataExchange
         public override string ToString()
         {
             return $"ExchangeTree: {ExchangeTitle} ({ElementCount} elements, {GeometryCount} geometries)";
+        }
+
+        /// <summary>
+        /// Resolves a list of element/asset names to geometry asset IDs.
+        /// For each name match:
+        /// - If the matched node has geometry, its ID is included
+        /// - If it doesn't have geometry, its children are searched recursively
+        /// </summary>
+        /// <param name="names">List of names to search for (case-insensitive)</param>
+        /// <returns>Tuple of (geometry IDs list, matched names list)</returns>
+        public (List<string> geometryIds, List<string> matchedNames) ResolveGeometryIds(List<string> names)
+        {
+            var geometryIds = new HashSet<string>();
+            var matchedNames = new List<string>();
+
+            if (names == null || names.Count == 0)
+                return (new List<string>(), matchedNames);
+
+            var nameSet = new HashSet<string>(names, StringComparer.OrdinalIgnoreCase);
+
+            foreach (var node in Nodes.Values)
+            {
+                if (node.Name != null && nameSet.Contains(node.Name))
+                {
+                    if (!matchedNames.Contains(node.Name))
+                        matchedNames.Add(node.Name);
+
+                    CollectGeometryIds(node, geometryIds);
+                }
+            }
+
+            return (geometryIds.ToList(), matchedNames);
+        }
+
+        /// <summary>
+        /// Recursively collects geometry IDs from a node and its descendants.
+        /// If the node has geometry, its ID is added.
+        /// If not, child nodes are searched recursively.
+        /// </summary>
+        private void CollectGeometryIds(ExchangeTreeNode node, HashSet<string> geometryIds)
+        {
+            if (node == null) return;
+
+            if (node.HasGeometry)
+            {
+                geometryIds.Add(node.Id);
+            }
+
+            // Also search children for additional geometry
+            foreach (var childId in node.ChildIds)
+            {
+                if (Nodes.TryGetValue(childId, out var childNode))
+                {
+                    CollectGeometryIds(childNode, geometryIds);
+                }
+            }
         }
     }
 }
