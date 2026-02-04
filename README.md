@@ -8,6 +8,22 @@ Dynamo nodes for integrating with **Autodesk DataExchange** (ACC/BIM 360). Brows
 
 ---
 
+## Upload Workflows 
+
+https://github.com/user-attachments/assets/2b96a2a3-b2e8-47e7-93c0-11be174178f5
+
+
+https://github.com/user-attachments/assets/bee1007a-012b-44ef-a11e-71979c258fc3
+
+
+https://github.com/user-attachments/assets/54d0388b-502d-4399-9078-089d35bc24f0
+
+
+https://github.com/user-attachments/assets/b3cb9e4a-45a9-45d4-87c6-79b7e36d6013
+
+
+---
+
 ## ⚠️ Required: Local Dynamo Build Configuration
 
 **This package requires custom LibG files** that provide SMB geometry support not included in Dynamo's default `ProtoGeometry.dll`.
