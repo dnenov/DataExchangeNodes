@@ -373,31 +373,5 @@ namespace DataExchangeNodes.DataExchange
                 { "success", success }
             };
         }
-
-        /// <summary>
-        /// Gets available unit options for geometry export/upload.
-        /// Use this node to populate a dropdown for unit selection.
-        /// Returns unit strings compatible with ExportToSMB and UploadSMBToExchange.
-        /// </summary>
-        /// <returns>List of unit strings: kUnitType_CentiMeter, kUnitType_Meter, kUnitType_Feet, kUnitType_Inch</returns>
-        public static List<string> GetDataExchangeUnits()
-        {
-            return DataExchangeUtils.GetAvailableUnits();
-        }
-
-        /// <summary>
-        /// Gets available replace mode options for geometry upload.
-        /// Use this node to populate a dropdown for replace mode selection.
-        /// </summary>
-        /// <returns>List of replace mode strings: replaceByName, replaceAll, append</returns>
-        public static List<string> GetReplaceModes()
-        {
-            return new List<string>
-            {
-                "replaceByName",  // Default - replaces elements with same name
-                "replaceAll",     // Clears all existing elements
-                "append"          // Adds without replacing (original behavior)
-            };
-        }
     }
 }

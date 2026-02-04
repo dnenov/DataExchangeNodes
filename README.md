@@ -305,6 +305,19 @@ MIT License - See [LICENSE](LICENSE) for details.
 
 ---
 
+## 🔧 SDK Internals & Reflection Usage
+
+This package uses reflection to access internal DataExchange SDK methods for direct SMB upload/download (bypassing slow STEP conversion).
+
+**See [REFLECTION_API_REQUEST.md](REFLECTION_API_REQUEST.md)** for:
+- Detailed flow diagrams for upload and download operations
+- List of internal SDK methods we access via reflection
+- Proposed public API that would simplify integration
+
+This document is intended for the DataExchange SDK team to understand what functionality we need exposed.
+
+---
+
 ## 🙏 Acknowledgments
 
 - **DynamoATF** - Native geometry translation infrastructure
