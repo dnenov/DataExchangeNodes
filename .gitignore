@@ -103,6 +103,7 @@ claude.dm
 # Markdown files (except README.md)
 *.md
 !README.md
+!REFLECTION_API_REQUEST.md
 
 # Backup files
 *.bak
